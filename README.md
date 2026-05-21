@@ -61,3 +61,56 @@ python main.py
 ```
 --- 
 
+## Project structure
+1. Create the conda environment : 
+(automatically called "dmd")
+```bash
+conda env create --file=envirnment.yml
+```
+
+```bash
+Differentiable-Motif-Discovery/
+├── datasets/       
+├── layers/                 # folder containing the layers gnn, tnn => can also be taken from topomodelX
+│   ├── 
+│   ├── 
+│   └──             
+├── models/                 # L'architecture de vos réseaux
+│   ├── __init__.py
+│   ├── base_gnn.py         # Étape 1 : Le GNN initial pour l'espace latent
+│   ├── motif_generator.py  # Étape 2 : Échantillonnage stochastique (Gumbel-Softmax)
+│   ├── deepsets.py         # Étape 3 : Encodage invariant par permutation
+│   └── dmd_model.py        # Assemble le tout et fait le Rewiring (Étape 4)
+├── preprocessing/                 # folder containing the layers gnn, tnn => can also be taken from topomodelX
+│   ├── 
+│   ├── 
+│   └── 
+├── resources/                 # folder containing the layers gnn, tnn => can also be taken from topomodelX
+│   ├── 
+│   ├── 
+│   └── 
+├── tasks/                 # folder containing the layers gnn, tnn => can also be taken from topomodelX
+│   ├── node_classification.py
+│   └── graph_classification.py
+
+├── tests/ 
+│   ├── 
+│   └── 
+
+├── tools/ # ou "utils" ?? 
+│   ├── __init__.py
+│   ├── metrics.py          # accuracy, ROC, AUC, ...
+│   └── losses.py           # task + sparsity loss
+
+├── results/ 
+│   ├── analyze_results.py
+│   └── 
+├── train.py                # La boucle d'entraînement principale (forward, backward, optim)
+├── evaluate.py             # Script dédié uniquement aux tests (sur le test set)
+├── requirements.txt        # Liste des librairies (pip freeze)
+└── main.py                 # Le point d'entrée exécutable (avec le parsing d'arguments)
+
+# ├── nom_dossier/ 
+# │   ├── 
+# │   └──
+```
