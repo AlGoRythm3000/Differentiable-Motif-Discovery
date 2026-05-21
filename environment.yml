@@ -1,0 +1,29 @@
+#environment.yml
+name: dmd
+channels:
+  - pytorch
+  - nvidia
+  - pyg
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=2.0.1
+  - torchvision=0.15.2
+  - torchaudio=2.0.2
+  - pytorch-cuda=11.8 
+  - pyg
+  - torch-scatter
+  - torch-sparse
+  - torch-cluster
+  - torch-spline-conv
+  - torch-geometric
+  - networkx
+  - numpy
+  - matplotlib
+  - scikit-learn
+  - scipy
+  - ipykernel # Pour faire tourner le notebook dans VS Code
+  - pip:
+    - topomodelx
