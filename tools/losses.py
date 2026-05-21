@@ -1,0 +1,1 @@
+# pour les fonctions de perte (cross-entropy, et celle parsity aware, etc.)
