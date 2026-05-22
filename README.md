@@ -65,7 +65,7 @@ python main.py
 1. Create the conda environment : 
 (automatically called "dmd")
 ```bash
-conda env create --file=envirnment.yml
+conda env create --file=environment.yml
 ```
 
 ```bash
@@ -75,29 +75,25 @@ Differentiable-Motif-Discovery/
 │   ├── 
 │   ├── 
 │   └──             
-├── models/                 # L'architecture de vos réseaux
+├── models/                 # the general architecture
 │   ├── __init__.py
-│   ├── base_gnn.py         # Étape 1 : Le GNN initial pour l'espace latent
-│   ├── motif_generator.py  # Étape 2 : Échantillonnage stochastique (Gumbel-Softmax)
-│   ├── deepsets.py         # Étape 3 : Encodage invariant par permutation
-│   └── dmd_model.py        # Assemble le tout et fait le Rewiring (Étape 4)
-├── preprocessing/                 # folder containing the layers gnn, tnn => can also be taken from topomodelX
+│   ├── embeddings.py         # different types of embeddings : GNNs, SPE, FoMLP, etc.  
+│   ├── motif_generator.py  # 
+│   ├── motifs.py           # motifs encoding
+│   └── dmd_model.py        # 
+├── resources/              # folder containing the images, or any other media
 │   ├── 
 │   ├── 
 │   └── 
-├── resources/                 # folder containing the layers gnn, tnn => can also be taken from topomodelX
-│   ├── 
-│   ├── 
-│   └── 
-├── tasks/                 # folder containing the layers gnn, tnn => can also be taken from topomodelX
+├── tasks/                  # task to be run
 │   ├── node_classification.py
 │   └── graph_classification.py
 
-├── tests/ 
-│   ├── 
-│   └── 
+├── tests/                  # directory for all the test functions
+│   ├── test_main.py
+│   └── test_train.py
 
-├── tools/ # ou "utils" ?? 
+├── tools/ # ou "utils" ?? déjà un fichier "utils" ...
 │   ├── __init__.py
 │   ├── metrics.py          # accuracy, ROC, AUC, ...
 │   └── losses.py           # task + sparsity loss
@@ -105,12 +101,16 @@ Differentiable-Motif-Discovery/
 ├── results/ 
 │   ├── analyze_results.py
 │   └── 
-├── train.py                # La boucle d'entraînement principale (forward, backward, optim)
-├── evaluate.py             # Script dédié uniquement aux tests (sur le test set)
-├── requirements.txt        # Liste des librairies (pip freeze)
+├── train.py                # main training loop (forward, backward, optim)
+├── evaluate.py             # test script
+├── environment.yml         # file containing the used packages   
 └── main.py                 # Le point d'entrée exécutable (avec le parsing d'arguments)
 
 # ├── nom_dossier/ 
 # │   ├── 
 # │   └──
+
+
+# besoin d'un comparaison avec difflift et DCM 
 ```
+
