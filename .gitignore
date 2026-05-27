@@ -3,3 +3,7 @@ full_environment.yml
 # ignore Python bytecode files and cache directories
 __pycache__/
 *.pyc
+
+# ignore virtual environment directories
+venv/
+*.egg-info/
