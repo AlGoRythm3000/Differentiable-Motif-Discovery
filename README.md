@@ -77,9 +77,10 @@ Differentiable-Motif-Discovery/
 │   └──             
 ├── models/                 # the general architecture
 │   ├── __init__.py
-│   ├── embeddings.py         # different types of embeddings : GNNs, SPE, FoMLP, etc.  
-│   ├── motif_generator.py  # 
-│   ├── motifs.py           # motifs encoding
+│   ├── graph_embeddings.py         # different types of embeddings : GNNs, SPE, FoMLP, etc.  
+│   ├── motif_proposition.py  # 
+│   ├── motifs_encodings.py           # motifs encoding
+│   ├── weight_assignement.py
 │   └── dmd_model.py        # 
 ├── resources/              # folder containing the images, or any other media
 │   ├── 
@@ -93,7 +94,7 @@ Differentiable-Motif-Discovery/
 │   ├── test_main.py
 │   └── test_train.py
 
-├── tools/ # ou "utils" ?? déjà un fichier "utils" ...
+├── utils/ # ou "utils" ?? déjà un fichier "utils" ...
 │   ├── __init__.py
 │   ├── metrics.py          # accuracy, ROC, AUC, ...
 │   └── losses.py           # task + sparsity loss

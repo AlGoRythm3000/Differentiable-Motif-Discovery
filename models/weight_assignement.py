@@ -1,0 +1,1 @@
+# Step 4 : weight assignement to motifs to learn a graph embedding from the motif distribution

@@ -1,0 +1,1 @@
+from models.motif_encodings import DeepSetsEncoder
