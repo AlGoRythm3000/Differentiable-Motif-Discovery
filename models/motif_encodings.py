@@ -8,9 +8,6 @@ class DeepSetsEncoder(nn.Module):
     """
     Permutation-invariant encoder based on the DeepSets architecture (from Zaheer et al., 2017).
     Computes a continuous latent representation for stochastically discovered structural motifs.
-    
-    Mathematical formulation:
-        $$h_S = \rho ( \bigoplus_{u \in \mathcal{S}} \psi(z_u) )$$
     """
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, 
                  aggregator_type: str = 'sum', dropout: float = 0.0):
