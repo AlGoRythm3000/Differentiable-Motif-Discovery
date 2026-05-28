@@ -62,10 +62,11 @@ python main.py
 --- 
 
 ## Project structure
-1. Create the conda environment : 
+1. Create and activate the conda environment : 
 (automatically called "dmd")
 ```bash
 conda env create --file=environment.yml
+conda activate dmd
 ```
 
 ```bash
