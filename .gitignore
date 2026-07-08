@@ -2,8 +2,12 @@ full_environment.yml
 
 # ignore Python bytecode files and cache directories
 __pycache__/
+.pytest_cache/
 *.pyc
+models\__pycache__\ 
 
 # ignore virtual environment directories
 venv/
 *.egg-info/
+
+CLAUDE.md
