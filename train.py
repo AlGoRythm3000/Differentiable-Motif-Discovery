@@ -1,6 +1,8 @@
 # calls graph_classification.py or node_classification.py to train the model
 
 import argparse
+import copy
+import json
 
 import torch
 
@@ -63,12 +65,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-graph-samples", type=int, default=3,
                          help="Number of sample graphs (original vs. rewired adjacency) to "
                               "snapshot at the end of training.")
+    parser.add_argument("--hparams-json", type=str, default=None,
+                         help="Path to a tune.py best_params.json. Its values are applied for any "
+                              "hyperparameter still at its argparse default (explicit CLI flags win).")
     return parser
 
 
 def main(argv=None):
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+
+    if args.hparams_json:
+        with open(args.hparams_json) as f:
+            best_params = json.load(f)["best_params"]
+        defaults = vars(build_arg_parser().parse_args([]))
+        for key, value in best_params.items():
+            if getattr(args, key) == defaults.get(key):
+                setattr(args, key, value)
+
     utils.set_seed(args.seed)
 
     task_module = TASKS[args.task]
@@ -76,18 +90,20 @@ def main(argv=None):
 
     logger = ExperimentLogger(args.results_dir, args, parser) if args.results_dir else None
 
-    model = DMDModel(
+    model_kwargs = dict(
         input_dim=input_dim, hidden_dim=args.hidden_dim, latent_dim=args.latent_dim,
         motif_hidden_dim=args.motif_hidden_dim, motif_out_dim=args.motif_out_dim,
         num_classes=num_classes, encoder_type=args.encoder, top_k=args.top_k,
         selector_tau=args.selector_tau, selector_hard=not args.selector_soft,
         include_original_edges=not args.no_original_edges,
     )
+    model = DMDModel(**model_kwargs)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = DMDLoss(sparsity_weight=args.sparsity_weight)
 
     best_val_acc = 0.0
     test_acc_at_best_val = 0.0
+    best_state_dict = None
 
     for epoch in range(1, args.epochs + 1):
         train_metrics = task_module.train_step(model, data, optimizer, criterion)
@@ -97,6 +113,7 @@ def main(argv=None):
         if val_metrics["accuracy"] > best_val_acc:
             best_val_acc = val_metrics["accuracy"]
             test_acc_at_best_val = test_metrics["accuracy"]
+            best_state_dict = copy.deepcopy(model.state_dict())
 
         if logger is not None:
             logger.log_epoch(epoch, train_metrics, val_metrics, test_metrics)
@@ -110,6 +127,8 @@ def main(argv=None):
 
     if logger is not None:
         logger.save_summary(result)
+        if best_state_dict is not None:
+            logger.save_checkpoint(best_state_dict, model_kwargs)
         logger.save_graph_samples(task_module.collect_graph_samples(model, data, args.save_graph_samples))
         logger.close()
         print(f"\nResults saved to {logger.exp_dir}")

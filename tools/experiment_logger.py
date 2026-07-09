@@ -8,6 +8,8 @@ import json
 import time
 from pathlib import Path
 
+import torch
+
 # Windows MAX_PATH is 260 chars by default; keep the experiment name well
 # under that so results_dir/name/run_id/history.jsonl never hits it, even
 # when several hyperparameters are swept away from their defaults at once.
@@ -17,7 +19,7 @@ _MAX_NAME_LENGTH = 60
 # data configuration - excluded from the experiment name (seed is handled
 # separately, appended last, since sweeping it is a common comparison axis).
 _ADMIN_FIELDS = {"task", "dataset", "epochs", "log_every", "results_dir",
-                  "data_root", "save_graph_samples", "seed"}
+                  "data_root", "save_graph_samples", "seed", "hparams_json"}
 
 
 def build_experiment_name(args, parser) -> str:
@@ -77,6 +79,16 @@ class ExperimentLogger:
     def save_summary(self, summary: dict) -> None:
         with open(self.exp_dir / "summary.json", "w") as f:
             json.dump(summary, f, indent=2)
+
+    def save_checkpoint(self, state_dict: dict, model_kwargs: dict) -> None:
+        """
+        model_kwargs is saved alongside the weights (not just in config.json)
+        so infer.py can reconstruct DMDModel(**model_kwargs) directly - it
+        already reflects input_dim/num_classes derived from the dataset, not
+        just the raw CLI args.
+        """
+        torch.save({"state_dict": state_dict, "model_kwargs": model_kwargs},
+                   self.exp_dir / "model_best.pt")
 
     def close(self) -> None:
         self._history_file.close()
