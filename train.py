@@ -19,7 +19,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train the DMD pipeline (Phase 0 scaffold).")
     parser.add_argument("--task", type=str, default="node_classification", choices=list(TASKS.keys()))
 
-    # dataset (toy synthetic path-of-cliques)
+    # dataset: node_classification only uses the toy synthetic path-of-cliques
+    # graph below. graph_classification selects a real benchmark via --dataset
+    # (NCI1, MUTAG, PROTEINS - TUDataset, auto-downloaded into --data-root).
+    parser.add_argument("--dataset", type=str, default=None,
+                         help="graph_classification only. Choices: NCI1, MUTAG, PROTEINS.")
+    parser.add_argument("--data-root", type=str, default="datasets",
+                         help="graph_classification only. Where TUDataset downloads/caches data.")
+    parser.add_argument("--batch-size", type=int, default=32,
+                         help="graph_classification only. Graphs per batch.")
     parser.add_argument("--num-cliques", type=int, default=8)
     parser.add_argument("--clique-size", type=int, default=6)
     parser.add_argument("--feature-dim", type=int, default=16)
