@@ -1,6 +1,7 @@
 # Step 2 : stochastic sampling (using gumbel softmax ?) of motifs from the motif distribution
 
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -51,17 +52,37 @@ class MotifProposal(nn.Module):
         self.W = nn.Parameter(torch.Tensor(latent_dim, latent_dim))
         nn.init.xavier_uniform_(self.W)
 
-    def forward(self, Z: torch.Tensor, exclude_self: bool = True) -> CandidateCells:
+    def forward(self, Z: torch.Tensor, exclude_self: bool = True,
+                batch: Optional[torch.Tensor] = None) -> CandidateCells:
         """
         Z: [N, d] node embeddings
+        batch: optional [N] graph-id per node (PyG batching convention). When
+        several graphs are batched together, similarity is computed over all
+        N nodes at once - without this mask, top-k would happily recruit
+        members from an unrelated graph in the same batch. Pass it whenever
+        Z may contain more than one graph.
         Returns a CandidateCells with one cell per node (num_cells == N).
         """
         num_nodes = Z.size(0)
-        k = min(self.top_k, num_nodes - 1 if exclude_self else num_nodes)
 
         logits = (Z @ self.W) @ Z.t()  # [N, N]
         if exclude_self:
             logits = logits.masked_fill(torch.eye(num_nodes, dtype=torch.bool, device=Z.device), float("-inf"))
+
+        if batch is None:
+            max_candidates = num_nodes - 1 if exclude_self else num_nodes
+        else:
+            cross_graph = batch.unsqueeze(0) != batch.unsqueeze(1)  # [N, N]
+            logits = logits.masked_fill(cross_graph, float("-inf"))
+            graph_sizes = torch.bincount(batch)
+            max_candidates = int(graph_sizes.min().item()) - (1 if exclude_self else 0)
+
+        k = min(self.top_k, max(max_candidates, 0))
+        if k == 0:
+            raise ValueError(
+                "top_k leaves no valid same-graph candidate: the smallest graph in this "
+                "batch has too few nodes for the requested --top-k."
+            )
 
         topk_values, topk_indices = torch.topk(logits, k=k, dim=-1)  # both [N, k]
 

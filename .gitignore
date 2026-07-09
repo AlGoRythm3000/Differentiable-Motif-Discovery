@@ -16,4 +16,8 @@ venv/
 # ignore downloaded/cached datasets (auto-fetched by TUDataset etc.)
 datasets/
 
+# ignore per-run training results (config/metrics/graph snapshots) - keep
+# results/analyze_results.py tracked, just not its output.
+results/runs/
+
 CLAUDE.md

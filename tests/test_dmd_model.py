@@ -95,6 +95,30 @@ def test_forward_with_batch_pools_to_one_row_per_graph():
     assert structure["alpha"].shape == (10,)  # still one candidate cell per node
 
 
+def test_batch_rewired_edges_never_cross_graph_boundaries():
+    """Regression test: Stage 2's candidate proposal must be masked by
+    `batch`, otherwise Stage 5's rewired edge_index can reference nodes in
+    a *different* graph than the one it's meant to rewire - corrupting
+    graph-classification training (a real bug caught while building the
+    original-vs-rewired adjacency visualization)."""
+    torch.manual_seed(0)
+    x1, edge_index1 = _toy_graph()
+    x2, edge_index2 = _toy_graph()
+    x = torch.cat([x1, x2], dim=0)
+    edge_index = torch.cat([edge_index1, edge_index2 + 5], dim=1)
+    batch = torch.tensor([0, 0, 0, 0, 0, 1, 1, 1, 1, 1], dtype=torch.long)
+
+    model = _make_model()
+    model.eval()
+    with torch.no_grad():
+        _, structure = model(x, edge_index, batch=batch)
+
+    rewired_edge_index = structure["rewired_edge_index"]
+    src_graph = batch[rewired_edge_index[0]]
+    dst_graph = batch[rewired_edge_index[1]]
+    assert torch.equal(src_graph, dst_graph)
+
+
 def test_batch_gradients_reach_every_submodule():
     torch.manual_seed(0)
     x1, edge_index1 = _toy_graph()

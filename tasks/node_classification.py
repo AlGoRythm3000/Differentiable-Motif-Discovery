@@ -46,3 +46,22 @@ def eval_step(model, data, criterion, mask) -> dict:
         "task": loss_out.task.item(),
         "accuracy": accuracy(logits, data.y, mask),
     }
+
+
+@torch.no_grad()
+def collect_graph_samples(model, data, num_samples: int = 1) -> list:
+    """
+    Only one graph exists for this task (the toy path-of-cliques), so
+    `num_samples` is ignored - returns that single graph's original vs.
+    rewired edges for results/analyze_results.py's adjacency heatmaps.
+    """
+    model.eval()
+    _, structure = model(data.x, data.edge_index)
+    return [{
+        "graph_id": 0,
+        "num_nodes": data.x.size(0),
+        "label": None,
+        "edge_index": data.edge_index.tolist(),
+        "rewired_edge_index": structure["rewired_edge_index"].tolist(),
+        "rewired_edge_weight": structure["rewired_edge_weight"].tolist(),
+    }]
