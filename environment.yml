@@ -22,6 +22,7 @@ dependencies:
   - pytest
   - pip:
     - topomodelx
+    - optuna
     - --find-links https://data.pyg.org/whl/torch-2.0.1+cu118.html
     - torch-scatter
     - torch-sparse
