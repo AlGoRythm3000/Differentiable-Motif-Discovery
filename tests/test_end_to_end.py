@@ -53,6 +53,7 @@ def test_train_main_smoke():
         "--motif-out-dim", "4",
         "--top-k", "2",
         "--log-every", "100",
+        "--results-dir", "",
     ])
     assert 0.0 <= result["best_val_acc"] <= 1.0
     assert 0.0 <= result["test_acc_at_best_val"] <= 1.0

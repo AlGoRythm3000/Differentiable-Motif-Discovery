@@ -79,15 +79,17 @@ class DMDModel(nn.Module):
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: Optional[torch.Tensor] = None):
         """
         batch: optional [N] graph-id per node (PyG batching convention). When
-        given, node representations are mean-pooled per graph before the
-        classifier head, turning this into a graph-classification model
-        (one logit row per graph instead of per node). None (default)
-        preserves the original per-node classification behavior.
+        given, (a) node representations are mean-pooled per graph before the
+        classifier head, turning this into a graph-classification model (one
+        logit row per graph instead of per node), and (b) Stage 2's candidate
+        proposal is masked so a motif can never recruit a member from a
+        different graph in the batch. None (default) preserves the original
+        single-graph, per-node classification behavior.
         """
         num_nodes = x.size(0)
 
         Z = self.embedder(x, edge_index)                       # Stage 1: [N, latent_dim]
-        candidates = self.proposal(Z)                          # Stage 2: one candidate cell per node
+        candidates = self.proposal(Z, batch=batch)              # Stage 2: one candidate cell per node
         alpha = self.selector(candidates.scores)                # Stage 4: [num_cells] accept weight
 
         # Stage 3: encode each candidate cell as a bag of member node embeddings,

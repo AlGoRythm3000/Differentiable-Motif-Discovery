@@ -7,6 +7,7 @@ import torch
 import utils
 from models.dmd_model import DMDModel
 from tools.losses import DMDLoss
+from tools.experiment_logger import ExperimentLogger
 from tasks import node_classification, graph_classification
 
 TASKS = {
@@ -54,15 +55,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--weight-decay", type=float, default=5e-4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--log-every", type=int, default=20)
+
+    # results persistence
+    parser.add_argument("--results-dir", type=str, default="results/runs",
+                         help="Where per-run config/metrics/graph snapshots are saved "
+                              "(results/analyze_results.py reads from here). Pass \"\" to disable.")
+    parser.add_argument("--save-graph-samples", type=int, default=3,
+                         help="Number of sample graphs (original vs. rewired adjacency) to "
+                              "snapshot at the end of training.")
     return parser
 
 
 def main(argv=None):
-    args = build_arg_parser().parse_args(argv)
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
     utils.set_seed(args.seed)
 
     task_module = TASKS[args.task]
     data, input_dim, num_classes = task_module.load_dataset(args)
+
+    logger = ExperimentLogger(args.results_dir, args, parser) if args.results_dir else None
 
     model = DMDModel(
         input_dim=input_dim, hidden_dim=args.hidden_dim, latent_dim=args.latent_dim,
@@ -86,13 +98,24 @@ def main(argv=None):
             best_val_acc = val_metrics["accuracy"]
             test_acc_at_best_val = test_metrics["accuracy"]
 
+        if logger is not None:
+            logger.log_epoch(epoch, train_metrics, val_metrics, test_metrics)
+
         if epoch % args.log_every == 0 or epoch == 1:
             print(f"Epoch {epoch:03d} | Train Loss: {train_metrics['loss']:.4f} "
                   f"(Task: {train_metrics['task']:.4f}, Sparse: {train_metrics['sparsity']:.4f}) | "
                   f"Val Acc: {val_metrics['accuracy']:.4f} | Test Acc: {test_metrics['accuracy']:.4f}")
 
+    result = {"best_val_acc": best_val_acc, "test_acc_at_best_val": test_acc_at_best_val}
+
+    if logger is not None:
+        logger.save_summary(result)
+        logger.save_graph_samples(task_module.collect_graph_samples(model, data, args.save_graph_samples))
+        logger.close()
+        print(f"\nResults saved to {logger.exp_dir}")
+
     print(f"\nBest Val Acc: {best_val_acc:.4f} | Test Acc @ Best Val: {test_acc_at_best_val:.4f}")
-    return {"best_val_acc": best_val_acc, "test_acc_at_best_val": test_acc_at_best_val}
+    return result
 
 
 if __name__ == "__main__":

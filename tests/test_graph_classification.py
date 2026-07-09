@@ -55,6 +55,7 @@ def test_train_main_smoke():
         "--motif-out-dim", "4",
         "--top-k", "2",
         "--log-every", "100",
+        "--results-dir", "",
     ])
     assert not math.isnan(result["best_val_acc"])
     assert 0.0 <= result["best_val_acc"] <= 1.0

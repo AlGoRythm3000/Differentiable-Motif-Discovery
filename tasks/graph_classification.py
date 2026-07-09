@@ -108,3 +108,45 @@ def train_step(model, data, optimizer, criterion) -> dict:
 def eval_step(model, data, criterion, loader) -> dict:
     metrics = _run_loader(model, loader, criterion, optimizer=None)
     return {"loss": metrics["loss"], "task": metrics["task"], "accuracy": metrics["accuracy"]}
+
+
+@torch.no_grad()
+def collect_graph_samples(model, data, num_samples: int = 3) -> list:
+    """
+    Runs the model on the first `num_samples` test graphs (as one small
+    batch) and unbatches each graph's original vs. rewired edges for
+    results/analyze_results.py's adjacency heatmaps.
+    """
+    model.eval()
+    test_dataset = data.test_mask.dataset
+    n = min(num_samples, len(test_dataset))
+    if n == 0:
+        return []
+
+    loader = DataLoader(test_dataset[:n], batch_size=n)
+    batch = next(iter(loader))
+    _, structure = model(batch.x, batch.edge_index, batch=batch.batch)
+    rewired_edge_index = structure["rewired_edge_index"]
+    rewired_edge_weight = structure["rewired_edge_weight"]
+
+    samples = []
+    ptr = batch.ptr.tolist()
+    for i in range(n):
+        lo, hi = ptr[i], ptr[i + 1]
+
+        orig_mask = (batch.edge_index[0] >= lo) & (batch.edge_index[0] < hi)
+        orig_edges = (batch.edge_index[:, orig_mask] - lo).tolist()
+
+        rew_mask = (rewired_edge_index[0] >= lo) & (rewired_edge_index[0] < hi)
+        rew_edges = (rewired_edge_index[:, rew_mask] - lo).tolist()
+        rew_weights = rewired_edge_weight[rew_mask].tolist()
+
+        samples.append({
+            "graph_id": i,
+            "num_nodes": hi - lo,
+            "label": int(batch.y[i].item()),
+            "edge_index": orig_edges,
+            "rewired_edge_index": rew_edges,
+            "rewired_edge_weight": rew_weights,
+        })
+    return samples
