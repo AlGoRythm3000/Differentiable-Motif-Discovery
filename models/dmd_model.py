@@ -2,10 +2,12 @@
 # dmd_model.py owns model ARCHITECTURE only (stages 1-5). tasks/*.py owns the
 # training loop, train.py/main.py own the CLI.
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, global_mean_pool
 from torch_geometric.utils import coalesce
 
 from models.graph_embeddings import GraphEmbedder
@@ -22,7 +24,7 @@ def build_rewired_edges(edge_index: torch.Tensor, candidates: CandidateCells,
     each non-anchor member, both directions), edge weight = that cell's
     `alpha` (differentiable). Unions with the original 1-skeleton at weight
     1.0 when `include_original=True` (set False for the "rewired 1-skeleton
-    only" ablation arm from CLAUDE.md §7). Duplicate edges (e.g. an original
+    only" ablation arm). Duplicate edges (e.g. an original
     edge that's also proposed) are merged by max weight via `coalesce`, which
     keeps gradients flowing through whichever weight tensor achieved the max.
 
@@ -55,7 +57,7 @@ def build_rewired_edges(edge_index: torch.Tensor, candidates: CandidateCells,
 
 class DMDModel(nn.Module):
     """
-    Orchestrates Stages 1->5 of the pipeline (CLAUDE.md §4). Stage 6 (the loss,
+    Orchestrates Stages 1->5 of the pipeline. Stage 6 (the loss,
     including the future OSq term) lives in tools/losses.py and consumes the
     `structure` dict this model's forward returns.
     """
@@ -74,7 +76,14 @@ class DMDModel(nn.Module):
         self.classifier = nn.Linear(latent_dim + motif_out_dim, num_classes)
         self.include_original_edges = include_original_edges
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: Optional[torch.Tensor] = None):
+        """
+        batch: optional [N] graph-id per node (PyG batching convention). When
+        given, node representations are mean-pooled per graph before the
+        classifier head, turning this into a graph-classification model
+        (one logit row per graph instead of per node). None (default)
+        preserves the original per-node classification behavior.
+        """
         num_nodes = x.size(0)
 
         Z = self.embedder(x, edge_index)                       # Stage 1: [N, latent_dim]
@@ -93,7 +102,10 @@ class DMDModel(nn.Module):
         )
         Z_rewired = F.relu(self.rewired_conv(Z, rewired_edge_index, edge_weight=rewired_edge_weight))
 
-        logits = self.classifier(torch.cat([Z_rewired, motif_embeddings], dim=-1))
+        node_repr = torch.cat([Z_rewired, motif_embeddings], dim=-1)
+        if batch is not None:
+            node_repr = global_mean_pool(node_repr, batch)  # [num_graphs, latent_dim + motif_out_dim]
+        logits = self.classifier(node_repr)
 
         structure = {
             "alpha": alpha,

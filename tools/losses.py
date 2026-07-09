@@ -20,7 +20,7 @@ class DMDLoss(nn.Module):
     Stage 6 (simple brick): task loss + sparsity loss on the differentiable
     cell-acceptance weights `alpha`.
 
-    The OSq term (this project's novel brick, see CLAUDE.md §6) is deliberately
+    The OSq term is deliberately
     a no-op by default (`osq_weight=0.0`, `osq_fn=None`): Phase 0 must not
     depend on it. Phase 1 turns it on purely via constructor arguments -
     `forward`'s call site never needs to change.

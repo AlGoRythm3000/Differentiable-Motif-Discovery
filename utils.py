@@ -17,7 +17,7 @@ def make_path_of_cliques(num_cliques: int = 8, clique_size: int = 6) -> nx.Graph
     num_cliques disjoint K_{clique_size} cliques, chained by a single bridge
     edge between consecutive cliques (last node of clique i <-> first node of
     clique i+1). Each node gets a `clique_id` attribute. This is the toy
-    synthetic graph family named in CLAUDE.md §9 (path-of-cliques) as an
+    synthetic graph family named (path-of-cliques) as an
     eventual falsification benchmark for oversquashing.
     """
     if num_cliques < 1 or clique_size < 2:

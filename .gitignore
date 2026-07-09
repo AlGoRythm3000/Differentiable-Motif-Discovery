@@ -13,4 +13,7 @@ tools/__pycache__/
 venv/
 *.egg-info/
 
+# ignore downloaded/cached datasets (auto-fetched by TUDataset etc.)
+datasets/
+
 CLAUDE.md
