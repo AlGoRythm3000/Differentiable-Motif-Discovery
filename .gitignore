@@ -4,7 +4,10 @@ full_environment.yml
 __pycache__/
 .pytest_cache/
 *.pyc
-models\__pycache__\ 
+models/__pycache__/
+tasks/__pycache__/
+tests/__pycache__/
+tools/__pycache__/
 
 # ignore virtual environment directories
 venv/
