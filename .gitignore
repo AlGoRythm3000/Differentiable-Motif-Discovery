@@ -20,4 +20,5 @@ datasets/
 # results/analyze_results.py tracked, just not its output.
 results/runs/
 
-CLAUDE.md
+papiers_bibliographie/ 
+
