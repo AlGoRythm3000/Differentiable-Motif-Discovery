@@ -45,6 +45,32 @@ def _stratified_counts(size: int, train_frac: float, val_frac: float):
     return n_train, n_val, n_test
 
 
+def stratified_split(labels, train_frac: float = 0.8, val_frac: float = 0.1, seed: int = 0):
+    """
+    Class-balanced train/val/test index split, returned as three lists of ints.
+
+    Stratified and explicitly seeded because the grid compares runs that differ
+    only by proxy or by OSq weight: an unstratified reshuffle would let a lucky
+    class balance masquerade as an effect of the objective. The indices are
+    returned (rather than the data) so a run can store exactly which graphs it
+    trained on.
+    """
+    labels = torch.as_tensor(labels).view(-1)
+    rng = np.random.RandomState(seed)
+    train_idx, val_idx, test_idx = [], [], []
+
+    for class_id in labels.unique().tolist():
+        idx = (labels == class_id).nonzero(as_tuple=False).view(-1).tolist()
+        rng.shuffle(idx)
+        n_train, n_val, _ = _stratified_counts(len(idx), train_frac, val_frac)
+        train_idx += idx[:n_train]
+        val_idx += idx[n_train:n_train + n_val]
+        test_idx += idx[n_train + n_val:]
+
+    rng.shuffle(train_idx)
+    return sorted(train_idx), sorted(val_idx), sorted(test_idx)
+
+
 def path_of_cliques_dataset(num_cliques: int = 8, clique_size: int = 6, feature_dim: int = 16,
                              train_frac: float = 0.6, val_frac: float = 0.2, seed: int = 0) -> Data:
     """

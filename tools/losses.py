@@ -17,13 +17,24 @@ class DMDLossOutput:
 
 class DMDLoss(nn.Module):
     """
-    Stage 6 (simple brick): task loss + sparsity loss on the differentiable
-    cell-acceptance weights `alpha`.
+    Stage 6: task loss + sparsity loss on the differentiable cell-acceptance
+    weights `alpha`, plus the oversquashing term.
 
-    The OSq term is deliberately
-    a no-op by default (`osq_weight=0.0`, `osq_fn=None`): Phase 0 must not
-    depend on it. Phase 1 turns it on purely via constructor arguments -
-    `forward`'s call site never needs to change.
+        L = L_task + mu * L_sparsity + gamma * L_osq
+
+    The OSq term stays a no-op by default (`osq_weight=0.0`, `osq_fn=None`) so
+    the scaffold never depends on it. Turning it on is purely a matter of
+    constructor arguments - `forward`'s call site never changes:
+
+        from tools.osq_proxies import get_proxy
+        DMDLoss(sparsity_weight=mu, osq_weight=gamma, osq_fn=get_proxy("r_bar"))
+
+    `gamma = 0` short-circuits `osq_fn` entirely, so it reproduces the
+    proxy-free objective bit for bit whatever proxy is configured.
+
+    Never set `sparsity_weight = 0` together with a positive `osq_weight`: every
+    OSq proxy is minimized by the complete graph, so the sparsity term is what
+    makes the objective non-degenerate, not decoration.
     """
 
     def __init__(self, sparsity_weight: float = 0.01, osq_weight: float = 0.0,

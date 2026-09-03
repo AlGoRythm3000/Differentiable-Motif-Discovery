@@ -21,7 +21,8 @@ class GumbelSigmoidSelector(nn.Module):
         makes the forward *value* hard (0./1.) while `d(alpha)/d(scores)`
         computed by autograd equals `d(alpha_soft)/d(scores)` exactly - i.e.
         gradient bypasses the hard threshold entirely. This is what lets
-        gradients reach `phi(z_C)` (== `scores` here) as required by CLAUDE §6.
+        gradients from Stage 6's objective (task, sparsity and the
+        oversquashing term) reach `phi(z_C)` (== `scores` here).
 
     At eval time (`self.training == False`) sampling noise is dropped and the
     module is deterministic: `alpha_soft = sigmoid(scores / tau)`.

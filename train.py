@@ -9,6 +9,9 @@ import torch
 import utils
 from models.dmd_model import DMDModel
 from tools.losses import DMDLoss
+from tools.osq_metrics import before_after_report
+from tools.osq_proxies import (DEFAULT_CG_MAXITER, DEFAULT_CG_TOL, DEFAULT_EPS,
+                                DEFAULT_HUTCH_K, available_proxies, get_proxy)
 from tools.experiment_logger import ExperimentLogger
 from tasks import node_classification, graph_classification
 
@@ -49,6 +52,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          help="Use soft (non straight-through) Stage 4 selection.")
     parser.add_argument("--no-original-edges", action="store_true",
                          help="Rewired-1-skeleton-only ablation (drops the original edges).")
+
+    # oversquashing objective (Stage 6). --osq-weight is the gamma of
+    # L = L_task + mu * L_sparsity + gamma * L_osq; at gamma = 0 the proxy is
+    # never called, so any --osq-proxy reproduces the proxy-free run exactly.
+    parser.add_argument("--osq-proxy", type=str, default="none", choices=list(available_proxies()),
+                         help="Which differentiable OSq proxy to add to the loss.")
+    parser.add_argument("--osq-weight", type=float, default=0.0,
+                         help="gamma, the weight of the OSq term.")
+    parser.add_argument("--hutch-k", type=int, default=DEFAULT_HUTCH_K,
+                         help="Number of Hutchinson probes / CG right-hand sides (r_bar, cf_bc_efc).")
+    parser.add_argument("--cg-tol", type=float, default=DEFAULT_CG_TOL)
+    parser.add_argument("--cg-maxiter", type=int, default=DEFAULT_CG_MAXITER)
+    parser.add_argument("--osq-eps", type=float, default=DEFAULT_EPS,
+                         help="Laplacian grounding. Keeps a disconnected structure finite and "
+                              "caps how bad a bottleneck is allowed to score.")
+    parser.add_argument("--osq-report", action="store_true",
+                         help="Measure OSq before/after on the sampled graphs at the end of "
+                              "training and store it in summary.json.")
 
     # optimization
     parser.add_argument("--sparsity-weight", type=float, default=0.05)
@@ -99,7 +120,14 @@ def main(argv=None):
     )
     model = DMDModel(**model_kwargs)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    criterion = DMDLoss(sparsity_weight=args.sparsity_weight)
+    if args.osq_weight > 0 and args.sparsity_weight == 0:
+        print("WARNING: an OSq term with no sparsity counterweight is minimized by the "
+              "complete graph. Set --sparsity-weight > 0.")
+
+    osq_fn = get_proxy(args.osq_proxy, hutch_k=args.hutch_k, cg_tol=args.cg_tol,
+                       cg_maxiter=args.cg_maxiter, eps=args.osq_eps)
+    criterion = DMDLoss(sparsity_weight=args.sparsity_weight, osq_weight=args.osq_weight,
+                        osq_fn=osq_fn)
 
     best_val_acc = 0.0
     test_acc_at_best_val = 0.0
@@ -126,10 +154,13 @@ def main(argv=None):
     result = {"best_val_acc": best_val_acc, "test_acc_at_best_val": test_acc_at_best_val}
 
     if logger is not None:
+        samples = task_module.collect_graph_samples(model, data, args.save_graph_samples)
+        if args.osq_report and samples:
+            result.update(before_after_report(samples))
         logger.save_summary(result)
         if best_state_dict is not None:
             logger.save_checkpoint(best_state_dict, model_kwargs)
-        logger.save_graph_samples(task_module.collect_graph_samples(model, data, args.save_graph_samples))
+        logger.save_graph_samples(samples)
         logger.close()
         print(f"\nResults saved to {logger.exp_dir}")
 

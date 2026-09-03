@@ -109,10 +109,19 @@ class DMDModel(nn.Module):
             node_repr = global_mean_pool(node_repr, batch)  # [num_graphs, latent_dim + motif_out_dim]
         logits = self.classifier(node_repr)
 
+        # `num_nodes` / `batch` / `edge_index` are carried alongside the rewired
+        # structure so Stage 6 can score it without re-deriving them: the OSq
+        # term is computed per graph (the batch's structure is block-diagonal,
+        # and a quantity averaged over the whole batch as if it were one graph
+        # would depend on the batch composition), and the curvature term needs
+        # the original 1-skeleton as its paired baseline.
         structure = {
             "alpha": alpha,
             "candidates": candidates,
+            "edge_index": edge_index,
             "rewired_edge_index": rewired_edge_index,
             "rewired_edge_weight": rewired_edge_weight,
+            "num_nodes": num_nodes,
+            "batch": batch,
         }
         return logits, structure

@@ -43,16 +43,81 @@ For a given target node $v$, a subset of candidate nodes $\mathcal{S}$ is sample
 
 $$p_\phi(u | v) \propto \exp(\text{sim}(z_v, z_u))$$
 
-To ensure the sampling operation remains differentiable for backpropagation, we employ the **Gumbel-Softmax** continuous relaxation.
+In the current implementation the members of a candidate cell are selected by a hard top-$k$ over these similarities. That selection carries **no gradient**: only the aggregated similarity score of a cell does, so the model learns *how much to trust* a cell rather than *whom to recruit*. The continuous relaxation (Gumbel-sigmoid, with a straight-through estimator) is applied one stage later, at the accept/reject decision of step 4. Making membership itself differentiable is a separate, explicitly scoped work item.
 
 ### 3. Permutation-invariant encoding
 The sampled nodes form an unorderd set $\mathcal{S}$. To aggregate these nodes into a single, fixed-size motif representation $h_{\mathcal{S}}$, we utilize a **DeepSets** architecture. This ensures that the structural encoding is strictly invariant to node permutation within the discovered motif.
 
 ### 4. Differentiable scoring and rewiring
-A Multi-Layer Perceptron (MLP) evaluates the aggregated motif representation $h_{\mathcal{S}}$ to output a continuous existence probability (weight). Motifs with negligible weights are pruned, dynamically rewiring the graph with soft, task-relevant higher-order connections.
+Each candidate cell's score is turned into a continuous acceptance weight $\alpha \in [0,1]$ by a **Gumbel-sigmoid** relaxation (a relaxed Bernoulli), optionally hardened by a straight-through estimator so the forward value is binary while the gradient still flows through the soft weight. Cells with negligible weight contribute nothing, dynamically rewiring the graph with soft, task-relevant higher-order connections.
 
 ### 5. End-to-end optimization <!--with Sparsity-->
-A downstream topological message-passing layer operates on this rewired structure. The entire pipeline is optimized jointly using the downstream task loss (e.g., cross-entropy for node classification). To prevent structural density explosion (oversmoothing/computational bottleneck), a sparsity-promoting regularization term is added to the objective function, forcing the model to select only the most informative motifs.
+A downstream message-passing layer operates on this rewired structure, and the whole pipeline is optimized jointly:
+
+$$\mathcal{L} = \mathcal{L}_{\text{task}} + \mu\,\mathcal{L}_{\text{sparsity}} + \gamma\,\mathcal{L}_{\text{OSq}}$$
+
+The sparsity term prevents structural density explosion (the objective would otherwise be minimized by connecting everything to everything). The third term scores the **oversquashing** of the rewired structure and is the object of the current work; it is evaluated on the *soft* acceptance weights, never on a thresholded structure, which is what makes it differentiable. See [OSq objective](#oversquashing-objective) below.
+
+## Oversquashing objective
+
+Oversquashing is *measured* and *optimized* by two deliberately separate modules, so that
+"we optimize X and the measured X moves" stays an auditable claim:
+
+| module | when | what |
+|---|---|---|
+| `tools/osq_metrics.py` | analysis time | exact effective resistance, $\lambda_2$, edge curvature, betweenness-weighted curvature (`wc`/`nwc`), influence decay. Reported, never optimized. |
+| `tools/osq_proxies.py` | training time | differentiable, cheap surrogates, swappable by name. Optimized, never reported as the measurement. |
+
+Proxies available (`--osq-proxy`):
+
+| key | what | role |
+|---|---|---|
+| `none` | exact zero | baseline arm |
+| `r_bar` | mean effective resistance, Hutchinson probes + conjugate gradient, closed-form backward | **primary** |
+| `lambda2` | spectral-gap surrogate via deflated power iteration + Rayleigh quotient | guard-rail |
+| `efc` | smooth penalty on negatively curved edges, paired against the original 1-skeleton | cheap, local |
+| `cf_bc_efc` | curvature weighted by current-flow betweenness, reusing `r_bar`'s solves | local + global |
+
+`r_bar` never forms $L^{+}$: it estimates $\mathrm{tr}(L^{+})$ from $k$ random probes solved by
+CG ($O(|E|)$ per iteration), and its gradient
+$\partial\,\mathrm{tr}(L^{+})/\partial w_e = -\lVert L^{+} b_e\rVert^2$ is read off the very
+solutions the forward pass already computed — so the backward pass is free, and it is local,
+which is what lets it chain back to each cell's acceptance weight. The gradient is checked
+against finite differences, and against the qualitative requirement that on two cliques
+joined by a bridge, the bridge is the edge it pushes hardest on.
+
+Two rules the code enforces and the tests pin down:
+
+* the proxy scores the **soft** structure (acceptance weights as continuous edge weights),
+  never a rounded one;
+* an OSq term is **never** run without the sparsity counterweight — every proxy here is
+  minimized by the complete graph.
+
+```bash
+# proxy-free run (unchanged behaviour)
+python train.py --task graph_classification --dataset MUTAG
+
+# with the primary proxy, and the before/after measurement stored in summary.json
+python train.py --task graph_classification --dataset MUTAG \
+    --osq-proxy r_bar --osq-weight 0.1 --sparsity-weight 0.05 --osq-report
+```
+
+`--osq-weight 0` short-circuits the proxy entirely, so it reproduces the proxy-free
+objective bit for bit whatever `--osq-proxy` says.
+
+### Experiment grid
+
+`tools/experiment_grid.py` runs `datasets × proxies × gamma × seeds`, writes an append-only
+results tree (`runs.csv`, `epochs.csv`, `env.json`, `raw/<run_id>.json`, schema frozen in
+`tools/results_store.py`), records a commit SHA on every row, never overwrites an existing
+`run_id`, and stores the OSq measurement **before and after** the lifting for each run.
+`notebooks/kaggle_osq_experiments.ipynb` is the self-contained Kaggle front-end: it clones a
+pinned branch, runs the grid, and zips the results.
+
+The grid includes a synthetic arm from `tools/synthetic.py` (bottleneck graph families with
+a query/answer matching task that cannot be solved without pushing information across the
+bottleneck). That arm is the falsification core — it is where an OSq-guided lifting is
+supposed to win — and the runtime guard never drops it.
 
 ## How to reproduce the results
 
@@ -95,10 +160,16 @@ Differentiable-Motif-Discovery/
 │   ├── test_main.py
 │   └── test_train.py
 
-├── utils/ # ou "utils" ?? déjà un fichier "utils" ...
+├── tools/
 │   ├── __init__.py
 │   ├── metrics.py          # accuracy, ROC, AUC, ...
-│   └── losses.py           # task + sparsity loss
+│   ├── losses.py           # task + sparsity + oversquashing loss
+│   ├── osq_metrics.py      # OSq measurement (exact, analysis time)
+│   ├── osq_proxies.py      # OSq proxies (differentiable, training time)
+│   ├── synthetic.py        # bottleneck graph families (falsification core)
+│   ├── experiment_grid.py  # datasets x proxies x gamma x seeds
+│   ├── results_store.py    # append-only results schema
+│   └── experiment_logger.py
 
 ├── results/ 
 │   ├── analyze_results.py

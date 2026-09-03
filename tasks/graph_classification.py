@@ -69,8 +69,13 @@ def _run_loader(model, loader, criterion, optimizer=None) -> dict:
 
     totals = {"loss": 0.0, "task": 0.0, "sparsity": 0.0, "osq": 0.0, "correct": 0.0}
     num_graphs = 0
+    # Follow the model rather than taking a device argument: the caller has
+    # already decided where the model lives, and a batch on the wrong device is
+    # the classic silent failure when a CPU-written loop is reused on a GPU.
+    device = next(model.parameters()).device
 
     for batch in loader:
+        batch = batch.to(device)
         if is_train:
             optimizer.zero_grad()
 
@@ -124,7 +129,7 @@ def collect_graph_samples(model, data, num_samples: int = 3) -> list:
         return []
 
     loader = DataLoader(test_dataset[:n], batch_size=n)
-    batch = next(iter(loader))
+    batch = next(iter(loader)).to(next(model.parameters()).device)
     _, structure = model(batch.x, batch.edge_index, batch=batch.batch)
     rewired_edge_index = structure["rewired_edge_index"]
     rewired_edge_weight = structure["rewired_edge_weight"]
