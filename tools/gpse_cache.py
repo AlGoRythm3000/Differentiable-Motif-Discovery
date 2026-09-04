@@ -159,6 +159,11 @@ def attach_gpse_cache(dataset, cache_path: Optional[str] = None,
     model = load_pretrained_gpse(pretrained_name, weights_root)
     if model is not None:
         from torch_geometric.nn.models.gpse import precompute_GPSE
+        
+        # Si le dataset personnalisé n'a pas d'attribut transform, on l'initialise à None
+        if not hasattr(dataset, 'transform'):
+            dataset.transform = None
+            
         precompute_GPSE(model, dataset)
         source = "gpse"
     else:
