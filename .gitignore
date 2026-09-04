@@ -16,6 +16,11 @@ venv/
 # ignore downloaded/cached datasets (auto-fetched by TUDataset etc.)
 datasets/
 
+# ignore the pretrained GPSE checkpoint (auto-fetched by GPSE.from_pretrained,
+# ~250MB) and any local GPSE encoding cache written by tools/gpse_cache.py
+GPSE_pretrained/
+*.gpse_cache.pt
+
 # ignore per-run training results (config/metrics/graph snapshots) - keep
 # results/analyze_results.py tracked, just not its output.
 results/runs/

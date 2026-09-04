@@ -43,7 +43,7 @@ For a given target node $v$, a subset of candidate nodes $\mathcal{S}$ is sample
 
 $$p_\phi(u | v) \propto \exp(\text{sim}(z_v, z_u))$$
 
-In the current implementation the members of a candidate cell are selected by a hard top-$k$ over these similarities. That selection carries **no gradient**: only the aggregated similarity score of a cell does, so the model learns *how much to trust* a cell rather than *whom to recruit*. The continuous relaxation (Gumbel-sigmoid, with a straight-through estimator) is applied one stage later, at the accept/reject decision of step 4. Making membership itself differentiable is a separate, explicitly scoped work item.
+By default (the `topk` brick) the members of a candidate cell are selected by a hard top-$k$ over these similarities. That selection carries **no gradient**: only the aggregated similarity score of a cell does, so the model learns *how much to trust* a cell rather than *whom to recruit*. The continuous relaxation actually applied by `topk` (Gumbel-**sigmoid**, with a straight-through estimator) happens one stage later, at the accept/reject decision of step 4 — not here, despite the name suggesting otherwise. Membership itself only becomes differentiable under the `autoregressive` brick (`feat/rich-bricks`), which builds a cell member-by-member, each step a genuine **Gumbel-softmax** draw over the remaining candidates conditioned on the running set; see [Rich bricks](#rich-bricks) below.
 
 ### 3. Permutation-invariant encoding
 The sampled nodes form an unorderd set $\mathcal{S}$. To aggregate these nodes into a single, fixed-size motif representation $h_{\mathcal{S}}$, we utilize a **DeepSets** architecture. This ensures that the structural encoding is strictly invariant to node permutation within the discovered motif.
@@ -57,6 +57,32 @@ A downstream message-passing layer operates on this rewired structure, and the w
 $$\mathcal{L} = \mathcal{L}_{\text{task}} + \mu\,\mathcal{L}_{\text{sparsity}} + \gamma\,\mathcal{L}_{\text{OSq}}$$
 
 The sparsity term prevents structural density explosion (the objective would otherwise be minimized by connecting everything to everything). The third term scores the **oversquashing** of the rewired structure and is the object of the current work; it is evaluated on the *soft* acceptance weights, never on a thresholded structure, which is what makes it differentiable. See [OSq objective](#oversquashing-objective) below.
+
+## Rich bricks
+
+`feat/rich-bricks` makes every stage config-driven: each of the five stages
+above is selectable by a string (`models/registry.py`), so a "simple" and a
+"rich" implementation are always a drop-in swap for each other. Assembled by
+`models/dmd_model.py::DMDModel`, e.g. `DMDModel(..., s1="gpse", s2="cycle_basis",
+s5="tnn")`, or via `train.py`'s `--encoder/--proposal/--cell-encoder/--selector-type/--message-passing`
+flags, or via a declarative config under `configs/` (see below).
+
+| stage | simple (default) | rich bricks |
+|---|---|---|
+| 1. node embeddings | `gcn`, `gin` | `gpse` - frozen pretrained structural encoder (Cantürk et al. 2024), cached per dataset (`tools/gpse_cache.py`); falls back to `pse_explicit` if the checkpoint can't be fetched |
+| | | `pse_explicit` - LapPE + RWSE via PyG transforms |
+| 2. candidate proposal | `topk` | `autoregressive` - builds each cell member-by-member, Gumbel-softmax per step; the only brick with differentiable membership |
+| | | `cycle_basis` - DiffLift-style: enumerates graph cycles (Paton's algorithm via `networkx.cycle_basis`), fixed membership |
+| 3. cell encoder | `deepsets` | `set_transformer` - ISAB + PMA attention over the cell |
+| | | `mini_gnn` - a small GNN over the cell's induced subgraph; the only encoder that tells a triangle from a 3-path |
+| 4. selection | `gumbel` | `ksubset` - relaxed top-k with explicit cardinality control |
+| | | `reinforce` - score-function estimator with an EMA baseline; the honest high-variance comparison point |
+| 5. message passing | `gnn_rewired` | `tnn` - a genuine cell complex, message-passed with TopoModelX's CWN layer (Bodnar et al. 2021); requires `s2=cycle_basis` |
+| | | `hypergraph_tnn` - accepted cells as hyperedges, message-passed with TopoModelX's UniGCN layer (Huang & Yang 2021); works with any proposal |
+
+`models/registry.py::validate_pipeline_config` rejects invalid combinations
+(currently: `s5=tnn` without `s2=cycle_basis`) with a clear error rather than
+silently building an invalid complex.
 
 ## Oversquashing objective
 
@@ -107,12 +133,17 @@ objective bit for bit whatever `--osq-proxy` says.
 
 ### Experiment grid
 
-`tools/experiment_grid.py` runs `datasets × proxies × gamma × seeds`, writes an append-only
-results tree (`runs.csv`, `epochs.csv`, `env.json`, `raw/<run_id>.json`, schema frozen in
-`tools/results_store.py`), records a commit SHA on every row, never overwrites an existing
-`run_id`, and stores the OSq measurement **before and after** the lifting for each run.
-`notebooks/kaggle_osq_experiments.ipynb` is the self-contained Kaggle front-end: it clones a
-pinned branch, runs the grid, and zips the results.
+`tools/experiment_grid.py` runs the Tier A/B/C pipeline configs under `configs/`
+(one brick swapped at a time, then crossed - see [Rich bricks](#rich-bricks) and
+`configs/`'s own files for the exact list) × `gamma ∈ {0, best}` × datasets × seeds,
+writes an append-only results tree (`runs.csv`, `epochs.csv`, `env.json`,
+`raw/<run_id>.json`, schema frozen in `tools/results_store.py`), records a commit SHA
+on every row, never overwrites an existing `run_id`, and stores the OSq measurement
+**before and after** the lifting for each run. `run_id` is
+`f"{tier}_{config_id}_{dataset}_g{gamma}_s{seed}"`.
+`notebooks/kaggle_rich_bricks.ipynb` is the self-contained, sharded Kaggle front-end: it
+clones a pinned branch, precomputes/caches GPSE encodings for whichever datasets need them,
+runs one shard of the grid, and zips the results.
 
 The grid includes a synthetic arm from `tools/synthetic.py` (bottleneck graph families with
 a query/answer matching task that cannot be solved without pushing information across the

@@ -20,15 +20,22 @@ import zipfile
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-# Column names are frozen. Add at the end if something new must be recorded;
-# never rename or reorder, or every existing results directory stops parsing.
+# Column names are frozen AS OF feat/rich-bricks (CLAUDE.md §12 fixes this
+# exact list/order). This is a deliberate one-time break from feat/osq-proxy's
+# schema (`proxy` -> `osq_proxy`, `tier`/`config_id` inserted, per-stage brick
+# columns added) - the branch also changes `run_id`'s shape, so the two
+# schemas were never going to share one results/ tree. From here on, the rule
+# reverts to what it always was: add new columns at the end, never rename or
+# reorder, or every results directory produced by this branch stops parsing.
 RUN_COLUMNS: List[str] = [
-    "run_id", "commit_sha", "dataset", "proxy", "gamma", "sparsity_weight", "seed",
+    "run_id", "commit_sha", "tier", "config_id", "dataset", "seed",
+    "s1_encoder", "s1_encoder_actual", "s2_proposal", "s3_cell_encoder", "s4_selector", "s5_mp",
+    "osq_proxy", "gamma", "sparsity_weight",
     "epochs_ran", "best_epoch", "train_acc", "val_acc", "test_acc",
     "train_loss", "task_loss", "sparsity_loss", "osq_loss",
-    "alpha_mean", "alpha_std", "num_cells",
-    "r_bar_before", "r_bar_after", "lambda2_before", "lambda2_after",
-    "wc", "nwc", "runtime_s", "status", "error",
+    "alpha_mean", "alpha_std", "num_cells", "mean_cell_size",
+    "r_bar_before", "r_bar_after", "lambda2_before", "lambda2_after", "wc", "nwc",
+    "params_count", "runtime_s", "peak_mem_mb", "status", "error",
 ]
 
 EPOCH_COLUMNS: List[str] = [
@@ -38,12 +45,13 @@ EPOCH_COLUMNS: List[str] = [
 ]
 
 
-def make_run_id(dataset: str, proxy: str, gamma: float, seed: int) -> str:
+def make_run_id(tier: str, config_id: str, dataset: str, gamma: float, seed: int) -> str:
     """
-    Deterministic, so a resumed grid recognizes what it already ran and an
-    analysis script can join a row back to its raw file without a lookup table.
+    Deterministic (CLAUDE.md §12), so a resumed grid recognizes what it
+    already ran and an analysis script can join a row back to its raw file
+    without a lookup table.
     """
-    return f"{dataset}_{proxy}_g{gamma}_s{seed}"
+    return f"{tier}_{config_id}_{dataset}_g{gamma}_s{seed}"
 
 
 class ResultsStore:

@@ -23,7 +23,7 @@ def load_dataset(args):
 def train_step(model, data, optimizer, criterion) -> dict:
     model.train()
     optimizer.zero_grad()
-    logits, structure = model(data.x, data.edge_index)
+    logits, structure = model(data.x, data.edge_index, node_pe=getattr(data, "pestat_GPSE", None))
     loss_out = criterion(logits, data.y, data.train_mask, structure)
     loss_out.total.backward()
     optimizer.step()
@@ -39,7 +39,7 @@ def train_step(model, data, optimizer, criterion) -> dict:
 @torch.no_grad()
 def eval_step(model, data, criterion, mask) -> dict:
     model.eval()
-    logits, structure = model(data.x, data.edge_index)
+    logits, structure = model(data.x, data.edge_index, node_pe=getattr(data, "pestat_GPSE", None))
     loss_out = criterion(logits, data.y, mask, structure)
     return {
         "loss": loss_out.total.item(),
@@ -56,7 +56,7 @@ def collect_graph_samples(model, data, num_samples: int = 1) -> list:
     rewired edges for results/analyze_results.py's adjacency heatmaps.
     """
     model.eval()
-    _, structure = model(data.x, data.edge_index)
+    _, structure = model(data.x, data.edge_index, node_pe=getattr(data, "pestat_GPSE", None))
     return [{
         "graph_id": 0,
         "num_nodes": data.x.size(0),

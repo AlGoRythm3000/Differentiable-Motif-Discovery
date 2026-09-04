@@ -80,7 +80,8 @@ def _run_loader(model, loader, criterion, optimizer=None) -> dict:
             optimizer.zero_grad()
 
         with torch.set_grad_enabled(is_train):
-            logits, structure = model(batch.x, batch.edge_index, batch=batch.batch)
+            node_pe = getattr(batch, "pestat_GPSE", None)
+            logits, structure = model(batch.x, batch.edge_index, batch=batch.batch, node_pe=node_pe)
             mask = torch.ones(logits.size(0), dtype=torch.bool, device=logits.device)
             loss_out = criterion(logits, batch.y, mask, structure)
 
@@ -130,7 +131,8 @@ def collect_graph_samples(model, data, num_samples: int = 3) -> list:
 
     loader = DataLoader(test_dataset[:n], batch_size=n)
     batch = next(iter(loader)).to(next(model.parameters()).device)
-    _, structure = model(batch.x, batch.edge_index, batch=batch.batch)
+    _, structure = model(batch.x, batch.edge_index, batch=batch.batch,
+                          node_pe=getattr(batch, "pestat_GPSE", None))
     rewired_edge_index = structure["rewired_edge_index"]
     rewired_edge_weight = structure["rewired_edge_weight"]
 

@@ -1,0 +1,11 @@
+# A1: s1 = gpse - isolates what the frozen pretrained structural encoder buys
+# on its own, everything else held at R.
+tier: A
+config_id: A1
+s1: gpse
+s2: topk
+s3: deepsets
+s4: gumbel
+s5: gnn_rewired
+s1_kwargs:
+  gpse_mode: concat

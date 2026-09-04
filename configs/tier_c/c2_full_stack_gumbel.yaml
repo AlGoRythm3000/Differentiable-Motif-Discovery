@@ -1,0 +1,10 @@
+# C2: C1 but s4=gumbel - isolates the k-subset contribution at the top end.
+tier: C
+config_id: C2
+s1: gpse
+s2: cycle_basis
+s3: mini_gnn
+s4: gumbel
+s5: tnn
+s1_kwargs:
+  gpse_mode: concat

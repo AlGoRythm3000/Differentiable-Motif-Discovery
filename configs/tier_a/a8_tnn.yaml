@@ -1,0 +1,9 @@
+# A8: s5 = tnn (requires s2 = cycle_basis, CLAUDE.md §4.5) - a genuine cell
+# complex at message-passing time instead of flattened star edges.
+tier: A
+config_id: A8
+s1: gcn
+s2: cycle_basis
+s3: deepsets
+s4: gumbel
+s5: tnn

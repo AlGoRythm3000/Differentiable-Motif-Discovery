@@ -1,0 +1,9 @@
+# A3: s2 = cycle_basis - the DiffLift-style contrast arm (fixed, topologically
+# valid cells; not differentiable membership).
+tier: A
+config_id: A3
+s1: gcn
+s2: cycle_basis
+s3: deepsets
+s4: gumbel
+s5: gnn_rewired

@@ -1,0 +1,12 @@
+# B4: the three-way interaction A1/A2/A5 individually measure.
+tier: B
+config_id: B4
+s1: gpse
+s2: autoregressive
+s3: mini_gnn
+s4: gumbel
+s5: gnn_rewired
+s1_kwargs:
+  gpse_mode: concat
+s2_kwargs:
+  max_size: 4
