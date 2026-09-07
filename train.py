@@ -7,6 +7,7 @@ import json
 import torch
 
 import utils
+from models import registry
 from models.dmd_model import DMDModel
 from tools.losses import DMDLoss
 from tools.osq_metrics import before_after_report
@@ -40,8 +41,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-frac", type=float, default=0.6)
     parser.add_argument("--val-frac", type=float, default=0.2)
 
-    # model
-    parser.add_argument("--encoder", type=str, default="gcn", choices=["gcn", "gin"])
+    # model - the five pipeline stages (models/registry.py), selectable by
+    # string. Defaults reproduce the pre-feat/rich-bricks "simple column"
+    # exactly. --encoder is kept as the Stage 1 flag name (rather than
+    # --s1) since every existing invocation already uses it.
+    parser.add_argument("--encoder", type=str, default="gcn",
+                         choices=list(registry.STAGE1_ENCODERS), help="Stage 1 brick.")
+    parser.add_argument("--proposal", type=str, default="topk",
+                         choices=list(registry.STAGE2_PROPOSALS), help="Stage 2 brick.")
+    parser.add_argument("--cell-encoder", type=str, default="deepsets",
+                         choices=list(registry.STAGE3_CELL_ENCODERS), help="Stage 3 brick.")
+    parser.add_argument("--selector-type", type=str, default="gumbel",
+                         choices=list(registry.STAGE4_SELECTORS), help="Stage 4 brick.")
+    parser.add_argument("--message-passing", type=str, default="gnn_rewired",
+                         choices=list(registry.STAGE5_MP), help="Stage 5 brick.")
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--latent-dim", type=int, default=32)
     parser.add_argument("--motif-hidden-dim", type=int, default=32)
@@ -114,8 +127,10 @@ def main(argv=None):
     model_kwargs = dict(
         input_dim=input_dim, hidden_dim=args.hidden_dim, latent_dim=args.latent_dim,
         motif_hidden_dim=args.motif_hidden_dim, motif_out_dim=args.motif_out_dim,
-        num_classes=num_classes, encoder_type=args.encoder, top_k=args.top_k,
-        selector_tau=args.selector_tau, selector_hard=not args.selector_soft,
+        num_classes=num_classes,
+        s1=args.encoder, s2=args.proposal, s3=args.cell_encoder,
+        s4=args.selector_type, s5=args.message_passing,
+        top_k=args.top_k, selector_tau=args.selector_tau, selector_hard=not args.selector_soft,
         include_original_edges=not args.no_original_edges,
     )
     model = DMDModel(**model_kwargs)
@@ -126,8 +141,9 @@ def main(argv=None):
 
     osq_fn = get_proxy(args.osq_proxy, hutch_k=args.hutch_k, cg_tol=args.cg_tol,
                        cg_maxiter=args.cg_maxiter, eps=args.osq_eps)
+    reinforce_module = model.selector if args.selector_type == "reinforce" else None
     criterion = DMDLoss(sparsity_weight=args.sparsity_weight, osq_weight=args.osq_weight,
-                        osq_fn=osq_fn)
+                        osq_fn=osq_fn, reinforce_module=reinforce_module)
 
     best_val_acc = 0.0
     test_acc_at_best_val = 0.0

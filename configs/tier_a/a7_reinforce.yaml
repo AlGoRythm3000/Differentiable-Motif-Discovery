@@ -1,0 +1,11 @@
+# A7: s4 = reinforce - the honest, unbiased-but-high-variance comparison
+# point. Expected to be worse; a documented negative is a result.
+tier: A
+config_id: A7
+s1: gcn
+s2: topk
+s3: deepsets
+s4: reinforce
+s5: gnn_rewired
+s4_kwargs:
+  baseline_decay: 0.9

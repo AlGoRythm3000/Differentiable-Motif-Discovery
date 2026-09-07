@@ -39,11 +39,28 @@ def test_end_to_end_gradients_reach_every_submodule():
     loss = logits.sum() + structure["alpha"].sum()
     loss.backward()
 
-    for name in ("embedder", "proposal", "motif_encoder", "rewired_conv", "classifier"):
+    for name in ("embedder", "proposal", "motif_encoder", "message_passing", "classifier"):
         submodule = getattr(model, name)
         grads = [p.grad for p in submodule.parameters() if p.requires_grad]
         assert len(grads) > 0
         assert any(g is not None and torch.any(g != 0) for g in grads), f"{name} got no gradient"
+
+
+def test_autoregressive_proposal_end_to_end_gradient_reaches_membership():
+    """Integration-level counterpart of the unit test in
+    test_motif_proposition.py: with s2=autoregressive wired into the full
+    model, gradient from the model's total output still reaches the
+    proposal's membership-conditioning parameters (GRU/query_proj)."""
+    torch.manual_seed(0)
+    x, edge_index = _toy_graph()
+    model = _make_model(s2="autoregressive", s2_kwargs={"max_size": 2})
+
+    logits, structure = model(x, edge_index)
+    loss = logits.sum() + structure["alpha"].sum()
+    loss.backward()
+
+    membership_params = list(model.proposal.set_gru.parameters()) + list(model.proposal.query_proj.parameters())
+    assert any(p.grad is not None and torch.any(p.grad != 0) for p in membership_params)
 
 
 def test_selection_actually_gates_stage5_output():
@@ -132,7 +149,7 @@ def test_batch_gradients_reach_every_submodule():
     loss = logits.sum() + structure["alpha"].sum()
     loss.backward()
 
-    for name in ("embedder", "proposal", "motif_encoder", "rewired_conv", "classifier"):
+    for name in ("embedder", "proposal", "motif_encoder", "message_passing", "classifier"):
         submodule = getattr(model, name)
         grads = [p.grad for p in submodule.parameters() if p.requires_grad]
         assert len(grads) > 0

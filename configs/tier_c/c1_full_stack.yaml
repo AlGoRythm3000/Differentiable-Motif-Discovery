@@ -1,0 +1,14 @@
+# C1: the full rich stack - every stage replaced at once.
+tier: C
+config_id: C1
+s1: gpse
+s2: cycle_basis
+s3: mini_gnn
+s4: ksubset
+s5: tnn
+s1_kwargs:
+  gpse_mode: concat
+s4_kwargs:
+  k: 8
+  tau_init: 1.0
+  tau_min: 0.1

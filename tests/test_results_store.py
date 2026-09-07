@@ -6,14 +6,14 @@ from tools.results_store import EPOCH_COLUMNS, RUN_COLUMNS, ResultsStore, make_r
 
 
 def _row(**overrides):
-    row = {"run_id": make_run_id("MUTAG", "r_bar", 0.1, 0), "dataset": "MUTAG",
-           "proxy": "r_bar", "gamma": 0.1, "seed": 0, "status": "ok"}
+    row = {"run_id": make_run_id("A", "A1", "MUTAG", 0.1, 0), "tier": "A", "config_id": "A1",
+           "dataset": "MUTAG", "osq_proxy": "r_bar", "gamma": 0.1, "seed": 0, "status": "ok"}
     row.update(overrides)
     return row
 
 
 def test_run_id_is_deterministic_and_readable():
-    assert make_run_id("MUTAG", "r_bar", 0.1, 2) == "MUTAG_r_bar_g0.1_s2"
+    assert make_run_id("A", "A1", "MUTAG", 0.1, 2) == "A_A1_MUTAG_g0.1_s2"
 
 
 def test_runs_csv_keeps_the_frozen_schema(tmp_path):
@@ -25,9 +25,11 @@ def test_runs_csv_keeps_the_frozen_schema(tmp_path):
         assert reader.fieldnames == RUN_COLUMNS
         rows = list(reader)
     assert len(rows) == 1
-    assert rows[0]["proxy"] == "r_bar"
+    assert rows[0]["osq_proxy"] == "r_bar"
+    assert rows[0]["config_id"] == "A1"
     # Columns that were not filled in stay present and empty, never missing.
     assert rows[0]["r_bar_after"] == ""
+    assert rows[0]["s1_encoder_actual"] == ""
 
 
 def test_unknown_columns_are_rejected(tmp_path):
@@ -59,8 +61,9 @@ def test_a_run_id_is_never_silently_overwritten(tmp_path):
 def test_appending_a_second_run_keeps_the_first(tmp_path):
     store = ResultsStore(tmp_path / "results")
     store.append_run(_row())
-    store.append_run(_row(run_id=make_run_id("MUTAG", "none", 0.0, 0), proxy="none", gamma=0.0))
-    assert {r["run_id"] for r in store.read_runs()} == {"MUTAG_r_bar_g0.1_s0", "MUTAG_none_g0.0_s0"}
+    store.append_run(_row(run_id=make_run_id("A", "A0", "MUTAG", 0.0, 0),
+                          config_id="A0", osq_proxy="none", gamma=0.0))
+    assert {r["run_id"] for r in store.read_runs()} == {"A_A1_MUTAG_g0.1_s0", "A_A0_MUTAG_g0.0_s0"}
 
 
 def test_epochs_csv_is_one_row_per_epoch(tmp_path):

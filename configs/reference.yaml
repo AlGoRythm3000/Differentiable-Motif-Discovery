@@ -1,0 +1,9 @@
+# R - the simple column plus the winning OSq proxy from feat/osq-proxy
+# (CLAUDE.md §9). Every tier is reported as a delta against this config.
+tier: R
+config_id: R
+s1: gcn
+s2: topk
+s3: deepsets
+s4: gumbel
+s5: gnn_rewired

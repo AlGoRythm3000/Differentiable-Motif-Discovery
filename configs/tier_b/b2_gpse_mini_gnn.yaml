@@ -1,0 +1,9 @@
+tier: B
+config_id: B2
+s1: gpse
+s2: topk
+s3: mini_gnn
+s4: gumbel
+s5: gnn_rewired
+s1_kwargs:
+  gpse_mode: concat

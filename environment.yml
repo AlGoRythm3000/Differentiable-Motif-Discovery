@@ -20,8 +20,10 @@ dependencies:
   - scipy
   - ipykernel
   - pytest
+  - pyyaml
   - pip:
     - topomodelx
+    - toponetx
     - optuna
     - --find-links https://data.pyg.org/whl/torch-2.0.1+cu118.html
     - torch-scatter

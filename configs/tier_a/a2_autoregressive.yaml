@@ -1,0 +1,11 @@
+# A2: s2 = autoregressive - the brick that makes cell membership itself
+# differentiable (closes gap 1, CLAUDE.md §7).
+tier: A
+config_id: A2
+s1: gcn
+s2: autoregressive
+s3: deepsets
+s4: gumbel
+s5: gnn_rewired
+s2_kwargs:
+  max_size: 4

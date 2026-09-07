@@ -1,0 +1,9 @@
+# A0 = R (reference). Included as its own Tier A row so every OFAT delta in
+# the tier is computed against a run that lives in the same tier's table.
+tier: A
+config_id: A0
+s1: gcn
+s2: topk
+s3: deepsets
+s4: gumbel
+s5: gnn_rewired

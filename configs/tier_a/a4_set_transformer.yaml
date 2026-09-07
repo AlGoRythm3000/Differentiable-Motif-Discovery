@@ -1,0 +1,12 @@
+# A4: s3 = set_transformer - models pairwise interactions inside the cell
+# (ISAB + PMA), unlike DeepSets' bag-of-nodes.
+tier: A
+config_id: A4
+s1: gcn
+s2: topk
+s3: set_transformer
+s4: gumbel
+s5: gnn_rewired
+s3_kwargs:
+  num_inducing: 16
+  num_heads: 2

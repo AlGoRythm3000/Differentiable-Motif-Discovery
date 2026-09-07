@@ -59,12 +59,13 @@ def predict(model, data, task: str, split: str):
     if task == "graph_classification":
         preds, labels = [], []
         for batch in split_data:
-            logits, _ = model(batch.x, batch.edge_index, batch=batch.batch)
+            logits, _ = model(batch.x, batch.edge_index, batch=batch.batch,
+                               node_pe=getattr(batch, "pestat_GPSE", None))
             preds += logits.argmax(dim=-1).tolist()
             labels += batch.y.tolist()
         return preds, labels
 
-    logits, _ = model(data.x, data.edge_index)
+    logits, _ = model(data.x, data.edge_index, node_pe=getattr(data, "pestat_GPSE", None))
     preds = logits[split_data].argmax(dim=-1).tolist()
     labels = data.y[split_data].tolist()
     return preds, labels

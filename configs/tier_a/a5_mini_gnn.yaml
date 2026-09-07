@@ -1,0 +1,9 @@
+# A5: s3 = mini_gnn - runs a small GNN over each cell's induced subgraph, the
+# encoder that genuinely sees internal topology (triangle != 3-path).
+tier: A
+config_id: A5
+s1: gcn
+s2: topk
+s3: mini_gnn
+s4: gumbel
+s5: gnn_rewired

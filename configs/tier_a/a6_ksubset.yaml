@@ -1,0 +1,13 @@
+# A6: s4 = ksubset - relaxed top-k selection with explicit cardinality
+# control, vs. independent Bernoulli gating.
+tier: A
+config_id: A6
+s1: gcn
+s2: topk
+s3: deepsets
+s4: ksubset
+s5: gnn_rewired
+s4_kwargs:
+  k: 8
+  tau_init: 1.0
+  tau_min: 0.1

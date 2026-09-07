@@ -16,14 +16,18 @@ venv/
 # ignore downloaded/cached datasets (auto-fetched by TUDataset etc.)
 datasets/
 
-# ignore per-run training results (config/metrics/graph snapshots) - keep
-# results/analyze_results.py tracked, just not its output.
-results/runs/
-
-papiers_bibliographie/
-
+# ignore the pretrained GPSE checkpoint (~254MB, fetched by ./download_gpse.sh)
+# and any local GPSE encoding cache written by tools/gpse_cache.py, but keep
+# GPSE_pretrained/README.md documenting the expected layout.
 GPSE_pretrained/*.pt
+*.gpse_cache.pt
 
-results/
+# Experiment outputs: ignore the run/analysis artefacts, but keep the analysis
+# SCRIPTS tracked - tests/test_analyze_*.py import them as `results.analyze_*`,
+# and the final report is built from what they produce.
+results/*
+!results/*.py
 
-paper/ 
+# the paper (draft, notes, bibliography pdfs, latex build) stays out of git
+paper/
+papiers_bibliographie/
