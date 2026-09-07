@@ -124,6 +124,9 @@ supposed to win — and the runtime guard never drops it.
 ```bash
 python main.py
 ```
+
+The pretrained GPSE weights are not tracked by git (~254 MiB). Fetch them once with
+`./download_gpse.sh` — see [GPSE_pretrained/README.md](GPSE_pretrained/README.md).
 --- 
 
 ## Project structure
