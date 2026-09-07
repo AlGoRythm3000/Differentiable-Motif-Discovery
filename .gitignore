@@ -20,5 +20,10 @@ datasets/
 # results/analyze_results.py tracked, just not its output.
 results/runs/
 
-papiers_bibliographie/ 
+papiers_bibliographie/
 
+GPSE_pretrained/*.pt
+
+results/
+
+paper/ 
