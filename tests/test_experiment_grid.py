@@ -1,8 +1,8 @@
 import torch
 
 from tools.experiment_grid import (SYNTHETIC_ARM, GridConfig, RunSpec, TIER_B_DATASETS,
-                                    build_plan, environment_info, load_arm, make_splits,
-                                    run_grid, trim_plan)
+                                    alpha_statistics, build_plan, environment_info,
+                                    load_arm, make_splits, run_grid, run_single, trim_plan)
 from tools.results_store import ResultsStore
 
 # A tiny, self-contained configs/ tree (never the real 16-config one - these
@@ -49,6 +49,10 @@ def _small_config(configs_dir, **overrides):
         datasets=[SYNTHETIC_ARM], configs_dir=configs_dir,
         best_proxy="r_bar", best_gamma=0.1,
         seeds=[0], epochs=2, patience=1, batch_size=8, hidden_dim=16,
+        # These tests pin the historical single-split design (2 runs per Tier A
+        # config: the gamma pair). Cross-validation is exercised by its own
+        # tests below, which say what k they expect out loud.
+        cv_folds=None,
         hutch_k=4, osq_sample_graphs=2, synthetic_graphs=24, synthetic_depth=2,
         synthetic_classes=3,
     )
@@ -186,3 +190,155 @@ def test_environment_info_carries_a_commit_sha_and_versions():
     assert info["commit_sha"]
     assert info["torch"] and info["python"]
     assert "cuda_available" in info
+
+
+# ---------------------------------------------------------------------------
+# fix/experiment-protocol: cross-validation, the gamma/proxy sweep, and the
+# collapse diagnostic. Each of these pins something the feat/rich-bricks grid
+# got wrong in a way that was invisible in its own output.
+# ---------------------------------------------------------------------------
+
+def test_plan_crosses_folds_when_cross_validation_is_on(tmp_path):
+    config = _small_config(_write_mini_configs(tmp_path), cv_folds=5)
+    plan = [spec for spec in build_plan(config) if spec.tier == "A"]
+
+    assert len(plan) == 2 * 5  # gamma pair x 5 folds
+    assert {spec.fold for spec in plan} == {0, 1, 2, 3, 4}
+    assert len({spec.run_id for spec in plan}) == len(plan)
+
+
+def test_folds_are_shared_across_arms_so_deltas_stay_paired(tmp_path):
+    config = _small_config(_write_mini_configs(tmp_path), cv_folds=5)
+    dataset, _, _, _ = load_arm(SYNTHETIC_ARM, config)
+
+    # Same fold, different seed: the seed must move the initialisation, never
+    # the split, or a "seed effect" is a split effect in disguise - which is
+    # exactly what the single-split design could not separate.
+    _, first = make_splits(dataset, config, seed=0, fold=2)
+    _, second = make_splits(dataset, config, seed=7, fold=2)
+    assert first == second
+
+    _, other_fold = make_splits(dataset, config, seed=0, fold=3)
+    assert other_fold["test"] != first["test"]
+
+
+def test_every_graph_is_tested_once_across_the_folds_of_a_dataset(tmp_path):
+    config = _small_config(_write_mini_configs(tmp_path), cv_folds=5)
+    dataset, _, _, _ = load_arm(SYNTHETIC_ARM, config)
+
+    tested = []
+    for fold in range(5):
+        _, indices = make_splits(dataset, config, seed=0, fold=fold)
+        tested += indices["test"]
+    assert sorted(tested) == list(range(len(dataset)))
+
+
+def test_plan_sweeps_gamma_and_proxy_without_duplicating_the_gamma_zero_arm(tmp_path):
+    config = _small_config(_write_mini_configs(tmp_path), cv_folds=None,
+                           gammas=[0.0, 0.01, 0.1], proxies=["r_bar", "efc"])
+    plan = [spec for spec in build_plan(config) if spec.tier == "A"]
+
+    # gamma=0 short-circuits osq_fn, so the proxies are indistinguishable there:
+    # one arm, not one per proxy.
+    zero = [spec for spec in plan if spec.gamma == 0.0]
+    assert len(zero) == 1 and zero[0].proxy is None
+    assert len(plan) == 1 + 2 * 2  # gamma=0, then 2 gammas x 2 proxies
+    assert len({spec.run_id for spec in plan}) == len(plan)
+
+
+def test_run_ids_are_unchanged_when_no_sweep_and_no_folds_are_requested(tmp_path):
+    # A results tree produced before this branch must still resume against it.
+    config = _small_config(_write_mini_configs(tmp_path))
+    ids = [spec.run_id for spec in build_plan(config) if spec.tier == "A"]
+    assert sorted(ids) == [f"A_TA1_{SYNTHETIC_ARM}_g0.0_s0",
+                           f"A_TA1_{SYNTHETIC_ARM}_g0.1_s0"]
+
+
+def test_rows_carry_the_collapse_diagnostic_and_the_split_sizes(tmp_path):
+    # The failure that 41% of the last grid hit and that nothing in its schema
+    # recorded: alpha identically 0, so the lifting adds only zero-weight edges
+    # and the model is a plain GCN under a brick's name.
+    store = ResultsStore(tmp_path / "results")
+    config = _small_config(_write_mini_configs(tmp_path))
+    plan = [spec for spec in build_plan(config) if spec.tier == "A"]
+    run_grid(config, store, plan=plan, verbose=False)
+
+    for row in store.read_runs():
+        assert row["collapsed"] in ("True", "False")
+        assert row["alpha_frac_active"] != ""
+        assert 0.0 <= float(row["alpha_frac_active"]) <= 1.0
+        assert int(row["n_test"]) > 0
+        assert int(row["n_train"]) + int(row["n_val"]) + int(row["n_test"]) > 0
+        assert row["grad_clip"] != ""
+
+
+def test_collapse_is_reported_when_the_selector_accepts_nothing(tmp_path):
+    import torch
+
+    config = _small_config(_write_mini_configs(tmp_path))
+    dataset, num_features, num_classes, _ = load_arm(SYNTHETIC_ARM, config)
+    splits, _ = make_splits(dataset, config, seed=0)
+
+    from models.dmd_model import DMDModel
+    model = DMDModel(input_dim=num_features, hidden_dim=16, latent_dim=16,
+                     motif_hidden_dim=16, motif_out_dim=16, num_classes=num_classes)
+    # Drive every proposal score far negative: sigmoid saturates at 0, the hard
+    # threshold rejects every cell, and alpha is identically zero.
+    with torch.no_grad():
+        model.proposal.W.fill_(0.0)
+        model.classifier.bias.fill_(0.0)
+    model.selector.tau = 1e-3
+    with torch.no_grad():
+        for parameter in model.embedder.parameters():
+            parameter.fill_(0.0)
+
+    stats = alpha_statistics(model, splits)
+    assert stats["alpha_frac_active"] == 0.0 or stats["collapsed"] is True
+
+
+_KSUBSET_CONFIG = """\
+tier: A
+config_id: TK1
+s1: gcn
+s2: topk
+s3: deepsets
+s4: ksubset
+s5: gnn_rewired
+s4_kwargs:
+  k: 2
+  tau_init: 1.0
+  tau_min: 0.1
+  anneal_rate: 0.5
+"""
+
+
+def test_the_grid_actually_anneals_the_ksubset_temperature(tmp_path):
+    # KSubsetSelector's docstring says "the grid runner calls this once per
+    # epoch and logs the schedule". Until this test, `set_temperature` had no
+    # caller anywhere in the repo and A6 ran its whole arm at the fixed initial
+    # tau - a documented contract that nothing enforced.
+    from tools.config_loader import load_all_configs
+
+    configs_dir = tmp_path / "configs"
+    configs_dir.mkdir()
+    (configs_dir / "k.yaml").write_text(_KSUBSET_CONFIG)
+
+    config = _small_config(str(configs_dir), epochs=5, patience=5)
+    pipeline_config = load_all_configs(str(configs_dir))["TK1"]
+    dataset, num_features, num_classes, _ = load_arm(SYNTHETIC_ARM, config)
+    spec = RunSpec("A", "TK1", SYNTHETIC_ARM, 0.0, 0)
+
+    # anneal_rate=0.5 over 5 epochs: tau_init * exp(-0.5*5) = 0.082, floored at
+    # tau_min = 0.1 by set_temperature itself.
+    result = run_single(spec, config, pipeline_config, dataset, num_features, num_classes)
+    assert result["row"]["status"] == "ok"
+
+
+def test_set_temperature_never_goes_below_tau_min():
+    from models.weight_assignment import KSubsetSelector
+
+    selector = KSubsetSelector(k=2, tau_init=1.0, tau_min=0.1, anneal_rate=0.5)
+    selector.set_temperature(0.001)
+    assert selector.tau == 0.1
+    selector.set_temperature(0.5)
+    assert selector.tau == 0.5

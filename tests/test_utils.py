@@ -1,6 +1,6 @@
 import torch
 
-from utils import make_path_of_cliques, path_of_cliques_dataset
+from utils import make_path_of_cliques, path_of_cliques_dataset, stratified_kfold
 
 
 def test_graph_structure_counts():
@@ -44,3 +44,55 @@ def test_beacon_marker_is_unique():
     beacon_channel = data.x[:, 0]
     assert beacon_channel[0].item() == 1.0
     assert torch.all(beacon_channel[1:] == 0.0)
+
+
+# ---------------------------------------------------------------------------
+# stratified_kfold - the protocol fix. A single 80/10/10 split gave MUTAG a
+# 20-graph test set, i.e. 5 accuracy points per graph, which is most of why the
+# feat/rich-bricks error bars were unreadable.
+# ---------------------------------------------------------------------------
+
+def _labels(n_per_class):
+    return torch.tensor([c for c, n in enumerate(n_per_class) for _ in range(n)])
+
+
+def test_kfold_makes_every_graph_a_test_graph_exactly_once():
+    labels = _labels([125, 63])  # MUTAG's class balance
+    folds = stratified_kfold(labels, n_splits=10, seed=0)
+
+    tested = [i for _, _, test in folds for i in test]
+    assert sorted(tested) == list(range(len(labels)))
+    assert len(tested) == len(set(tested))
+
+
+def test_kfold_splits_are_disjoint_and_cover_the_dataset():
+    labels = _labels([60, 40, 50])
+    for train, val, test in stratified_kfold(labels, n_splits=5, seed=1):
+        assert not set(train) & set(val)
+        assert not set(train) & set(test)
+        assert not set(val) & set(test)
+        assert len(train) + len(val) + len(test) == len(labels)
+
+
+def test_kfold_test_blocks_keep_the_class_balance():
+    labels = _labels([125, 63])
+    global_balance = float((labels == 1).float().mean())
+    for _, _, test in stratified_kfold(labels, n_splits=10, seed=0):
+        block = labels[torch.tensor(test)]
+        assert abs(float((block == 1).float().mean()) - global_balance) < 0.1
+
+
+def test_kfold_layout_is_reproducible_and_seed_dependent():
+    labels = _labels([50, 50])
+    assert stratified_kfold(labels, 5, seed=0) == stratified_kfold(labels, 5, seed=0)
+    assert stratified_kfold(labels, 5, seed=0) != stratified_kfold(labels, 5, seed=1)
+
+
+def test_kfold_rejects_too_few_splits():
+    # Fold i tests on block i and validates on block i+1, so k < 3 would leave
+    # no training data at all.
+    try:
+        stratified_kfold(_labels([10, 10]), n_splits=2)
+        assert False, "expected ValueError"
+    except ValueError:
+        pass

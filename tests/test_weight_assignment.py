@@ -168,3 +168,54 @@ def test_invalid_baseline_decay_raises():
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Regression: the failure that cost the feat/rich-bricks grid 36 runs.
+# A7 (s4=reinforce) diverged, `scores` went NaN, and `torch.bernoulli` turned
+# that into a CUDA device-side assert - asynchronous and unrecoverable, so the
+# 35 runs scheduled after it died instantly at `torch.manual_seed` with the
+# same traceback and A8 (s5=tnn) was never actually tested at all.
+# ---------------------------------------------------------------------------
+
+def test_reinforce_raises_a_catchable_error_on_non_finite_scores():
+    selector = REINFORCESelector()
+    selector.train()
+    scores = torch.tensor([0.5, float("nan"), -1.0])
+    try:
+        selector(scores)
+        assert False, "expected RuntimeError before torch.bernoulli is reached"
+    except RuntimeError as error:
+        assert "non-finite" in str(error)
+
+
+def test_reinforce_raises_on_inf_scores_too():
+    selector = REINFORCESelector()
+    selector.train()
+    try:
+        selector(torch.tensor([float("inf"), 0.0]))
+        assert False, "expected RuntimeError"
+    except RuntimeError as error:
+        assert "non-finite" in str(error)
+
+
+def test_clamp_alone_would_not_have_saved_us():
+    # The pre-fix code clamped `probs` into [eps, 1-eps] and assumed that made
+    # them valid probabilities. It does not: clamp propagates NaN. This test
+    # pins the property the fix exists for, so nobody "simplifies" the guard
+    # away on the grounds that the clamp already handles it.
+    probs = torch.sigmoid(torch.tensor([float("nan")])).clamp(min=1e-10, max=1 - 1e-10)
+    assert torch.isnan(probs).all()
+
+
+def test_reinforce_eval_mode_also_rejects_non_finite_scores():
+    # Eval takes the `(probs > 0.5)` branch, which does not call bernoulli - but
+    # a NaN there silently yields alpha=0 (a collapsed lifting) rather than an
+    # error, which is worse than a crash because it is reported as a result.
+    selector = REINFORCESelector()
+    selector.eval()
+    try:
+        selector(torch.tensor([float("nan"), 1.0]))
+        assert False, "expected RuntimeError"
+    except RuntimeError as error:
+        assert "non-finite" in str(error)

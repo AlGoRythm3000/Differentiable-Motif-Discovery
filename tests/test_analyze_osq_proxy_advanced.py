@@ -1,4 +1,4 @@
-from tools.results_store import ResultsStore, make_run_id
+from legacy_osq_schema import LegacyOsqStore, legacy_run_id
 from results.analyze_osq_proxy import load_runs
 from results.analyze_osq_proxy_advanced import (
     correlate_osq_reduction_with_accuracy,
@@ -15,7 +15,7 @@ from results.analyze_osq_proxy_advanced import (
 def _run(proxy, dataset, gamma, seed, test_acc, r_bar_after=None, lambda2_after=None,
          status="ok", error=""):
     return {
-        "run_id": make_run_id(dataset, proxy, gamma, seed),
+        "run_id": legacy_run_id(dataset, proxy, gamma, seed),
         "dataset": dataset, "proxy": proxy, "gamma": gamma, "seed": seed,
         "status": status, "error": error,
         "test_acc": test_acc, "r_bar_after": r_bar_after, "lambda2_after": lambda2_after,
@@ -23,7 +23,7 @@ def _run(proxy, dataset, gamma, seed, test_acc, r_bar_after=None, lambda2_after=
 
 
 def _store_with_runs(tmp_path, rows):
-    store = ResultsStore(tmp_path / "results")
+    store = LegacyOsqStore(tmp_path / "results")
     for row in rows:
         store.append_run(row)
     return load_runs(store.out_dir)
@@ -194,7 +194,7 @@ def test_end_to_end_over_a_small_synthetic_grid(tmp_path):
     """"none" is the baseline; "r_bar" adds a fixed +0.2 accuracy bump on
     every dataset and roughly halves r_bar_after - checks the whole
     pipeline agrees with those built-in, hand-computable effects."""
-    store = ResultsStore(tmp_path / "results")
+    store = LegacyOsqStore(tmp_path / "results")
     for dataset in ("MUTAG", "PROTEINS"):
         for seed in range(4):
             store.append_run(_run("none", dataset, 0.0, seed, test_acc=0.5, r_bar_after=2.0))
@@ -216,3 +216,19 @@ def test_end_to_end_over_a_small_synthetic_grid(tmp_path):
     correlation = correlate_osq_reduction_with_accuracy(pairs)
     assert correlation["n"] == 8
     assert correlation["pearson_r"] is None  # no spread across identical pairs
+
+
+def test_a_cross_validated_tree_pairs_per_fold_not_once_per_cell(tmp_path):
+    # The legacy analyser keyed pairs on (dataset, seed). Pointed at a tree with
+    # folds it would have kept one run per cell and dropped the rest in silence,
+    # so a 15-pair comparison would report as 3. Rows written here carry an
+    # explicit `fold`; the tests above cover the legacy no-fold rows.
+    store = LegacyOsqStore(tmp_path / "results", extra_columns=("fold",))
+    for fold in range(5):
+        store.append_run(dict(_run("none", "MUTAG", 0.0, 0, test_acc=0.60), fold=fold))
+        store.append_run(dict(_run("r_bar", "MUTAG", 0.01, 0, test_acc=0.65), fold=fold))
+    runs = load_runs(store.out_dir)
+
+    significance = {r["proxy"]: r for r in paired_proxy_significance(runs, metric="test_acc")}
+    assert significance["r_bar"]["n_pairs"] == 5
+    assert abs(significance["r_bar"]["mean_delta"] - 0.05) < 1e-9

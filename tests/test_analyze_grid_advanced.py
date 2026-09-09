@@ -244,3 +244,72 @@ def test_end_to_end_over_a_small_synthetic_grid(tmp_path):
     correlation = correlate_osq_reduction_with_accuracy(pairs)
     assert correlation["n"] == 16
     assert correlation["pearson_r"] is None
+
+
+# ---------------------------------------------------------------------------
+# fix/experiment-protocol: the fold is part of the pairing key.
+#
+# Under k-fold cross-validation a (config, dataset, seed) cell holds k runs on
+# k different test sets. Keying without the fold kept whichever row was read
+# last and dropped the other k-1 without a word, so a 600-pair comparison
+# quietly became a 60-pair one - and each surviving "pair" could straddle two
+# different test sets.
+# ---------------------------------------------------------------------------
+
+def _fold_run(config_id, dataset, gamma, seed, fold, test_acc, r_bar_after=None):
+    return {
+        "run_id": make_run_id("A", config_id, dataset, gamma, seed, fold=fold),
+        "tier": "A", "config_id": config_id, "dataset": dataset,
+        "gamma": gamma, "seed": seed, "fold": fold, "status": "ok", "error": "",
+        "test_acc": test_acc, "r_bar_after": r_bar_after,
+    }
+
+
+def test_every_fold_contributes_its_own_pair(tmp_path):
+    rows = []
+    for fold in range(5):
+        rows.append(_fold_run("A0", "MUTAG", 0.0, 0, fold, test_acc=0.60))
+        rows.append(_fold_run("A0", "MUTAG", 0.1, 0, fold, test_acc=0.65))
+    runs = _store_with_runs(tmp_path, rows)
+
+    significance = paired_osq_significance(runs, metric="test_acc")
+    assert len(significance) == 1
+    assert significance[0]["n_pairs"] == 5  # not 1
+    assert abs(significance[0]["mean_delta"] - 0.05) < 1e-9
+
+
+def test_a_pair_never_straddles_two_folds(tmp_path):
+    # gamma=0 is only present on fold 0; the gamma=0.1 run on fold 1 has no twin
+    # and must be dropped rather than paired against fold 0's baseline.
+    rows = [
+        _fold_run("A0", "MUTAG", 0.0, 0, 0, test_acc=0.60),
+        _fold_run("A0", "MUTAG", 0.1, 0, 0, test_acc=0.65),
+        _fold_run("A0", "MUTAG", 0.1, 0, 1, test_acc=0.95),
+    ]
+    runs = _store_with_runs(tmp_path, rows)
+
+    significance = paired_osq_significance(runs, metric="test_acc")
+    assert significance[0]["n_pairs"] == 1
+    assert abs(significance[0]["mean_delta"] - 0.05) < 1e-9  # not 0.175
+
+
+def test_pairing_still_works_on_rows_from_before_cross_validation(tmp_path):
+    # The two existing results trees have no `fold` column at all.
+    rows = [_run("A0", "MUTAG", 0.0, seed, test_acc=0.60) for seed in range(3)]
+    rows += [_run("A0", "MUTAG", 0.1, seed, test_acc=0.65) for seed in range(3)]
+    runs = _store_with_runs(tmp_path, rows)
+
+    significance = paired_osq_significance(runs, metric="test_acc")
+    assert significance[0]["n_pairs"] == 3
+
+
+def test_osq_reduction_pairs_carry_their_fold(tmp_path):
+    rows = []
+    for fold in range(3):
+        rows.append(_fold_run("A0", "MUTAG", 0.0, 0, fold, test_acc=0.60, r_bar_after=2.0))
+        rows.append(_fold_run("A0", "MUTAG", 0.1, 0, fold, test_acc=0.65, r_bar_after=1.0))
+    runs = _store_with_runs(tmp_path, rows)
+
+    pairs = osq_reduction_vs_accuracy(runs, osq_metric="r_bar_after", acc_metric="test_acc")
+    assert len(pairs) == 3
+    assert {pair["fold"] for pair in pairs} == {"0", "1", "2"}

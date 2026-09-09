@@ -95,3 +95,35 @@ def test_raw_and_env_are_json_and_zip_contains_everything(tmp_path):
     assert any(name.endswith("epochs.csv") for name in names)
     assert any(name.endswith("env.json") for name in names)
     assert any("raw/" in name for name in names)
+
+
+def test_run_id_keeps_its_historical_shape_without_folds_or_a_proxy_sweep():
+    # Results trees produced before fix/experiment-protocol must still resume.
+    assert make_run_id("A", "A1", "MUTAG", 0.1, 2) == "A_A1_MUTAG_g0.1_s2"
+    assert make_run_id("A", "A1", "MUTAG", 0.1, 2, fold=None, proxy=None) == "A_A1_MUTAG_g0.1_s2"
+
+
+def test_run_id_encodes_the_fold_and_the_proxy_when_they_vary():
+    assert make_run_id("A", "A0", "MUTAG", 0.1, 0, fold=3) == "A_A0_MUTAG_g0.1_s0_f3"
+    assert make_run_id("A", "A0", "MUTAG", 0.1, 0, proxy="efc") == "A_A0_MUTAG_pefc_g0.1_s0"
+    assert (make_run_id("A", "A0", "MUTAG", 0.1, 0, fold=0, proxy="r_bar")
+            == "A_A0_MUTAG_pr_bar_g0.1_s0_f0")
+    assert make_run_id("A", "A0", "MUTAG", 0.1, 0, fold=0) != make_run_id(
+        "A", "A0", "MUTAG", 0.1, 0, fold=1)
+
+
+def test_new_columns_are_appended_never_inserted():
+    # The whole point of freezing the schema: an analysis script written against
+    # the old column order must keep working. Anything added goes at the end.
+    historical = [
+        "run_id", "commit_sha", "tier", "config_id", "dataset", "seed",
+        "s1_encoder", "s1_encoder_actual", "s2_proposal", "s3_cell_encoder",
+        "s4_selector", "s5_mp", "osq_proxy", "gamma", "sparsity_weight",
+        "epochs_ran", "best_epoch", "train_acc", "val_acc", "test_acc",
+        "train_loss", "task_loss", "sparsity_loss", "osq_loss",
+        "alpha_mean", "alpha_std", "num_cells", "mean_cell_size",
+        "r_bar_before", "r_bar_after", "lambda2_before", "lambda2_after", "wc", "nwc",
+        "params_count", "runtime_s", "peak_mem_mb", "status", "error",
+    ]
+    assert RUN_COLUMNS[:len(historical)] == historical
+    assert "collapsed" in RUN_COLUMNS and "fold" in RUN_COLUMNS and "n_test" in RUN_COLUMNS

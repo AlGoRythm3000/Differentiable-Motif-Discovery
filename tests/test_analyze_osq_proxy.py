@@ -1,6 +1,6 @@
 import csv
 
-from tools.results_store import ResultsStore, make_run_id
+from legacy_osq_schema import LegacyOsqStore, legacy_run_id
 from results.analyze_osq_proxy import (
     _missing_proxies_note,
     _xtick_label,
@@ -21,7 +21,7 @@ from results.analyze_osq_proxy import (
 def _run(proxy, dataset, gamma, seed, test_acc, val_acc=None, runtime_s=10.0,
          status="ok", error=""):
     return {
-        "run_id": make_run_id(dataset, proxy, gamma, seed),
+        "run_id": legacy_run_id(dataset, proxy, gamma, seed),
         "dataset": dataset, "proxy": proxy, "gamma": gamma, "seed": seed,
         "status": status, "error": error,
         "test_acc": test_acc, "val_acc": val_acc if val_acc is not None else test_acc,
@@ -30,7 +30,7 @@ def _run(proxy, dataset, gamma, seed, test_acc, val_acc=None, runtime_s=10.0,
 
 
 def _store_with_runs(tmp_path, rows):
-    store = ResultsStore(tmp_path / "results")
+    store = LegacyOsqStore(tmp_path / "results")
     for row in rows:
         store.append_run(row)
     return store
@@ -55,7 +55,7 @@ def test_load_runs_coerces_numeric_columns_and_blanks_to_none(tmp_path):
 
 
 def test_load_epochs_coerces_numeric_columns(tmp_path):
-    store = ResultsStore(tmp_path / "results")
+    store = LegacyOsqStore(tmp_path / "results")
     store.append_epochs("run_a", [{"epoch": 1, "train_loss": 0.5, "val_acc": 0.6}])
     epochs = load_epochs(store.out_dir)
     assert epochs[0]["epoch"] == 1
@@ -232,14 +232,15 @@ def test_plot_loss_and_accuracy_curves_write_files(tmp_path):
 def test_end_to_end_over_a_small_synthetic_grid(tmp_path):
     """Builds a miniature but realistic results/ tree (2 proxies x 2
     datasets x 2 seeds, one proxy entirely failed) through the real
-    ResultsStore, then runs every analysis function over it and checks the
+    the legacy feat/osq-proxy schema, then runs every analysis function over it
+    and checks the
     numbers are internally consistent."""
-    store = ResultsStore(tmp_path / "results")
+    store = LegacyOsqStore(tmp_path / "results")
     for dataset in ("MUTAG", "synthetic_bottleneck"):
         for seed in (0, 1):
             store.append_run(_run("none", dataset, 0.0, seed, test_acc=0.6, runtime_s=5.0))
             store.append_epochs(
-                make_run_id(dataset, "none", 0.0, seed),
+                legacy_run_id(dataset, "none", 0.0, seed),
                 [{"epoch": e, "train_task": 1.0 / e, "val_loss": 1.0 / e, "test_loss": 1.0 / e,
                   "train_acc": 0.6, "val_acc": 0.6, "test_acc": 0.6} for e in (1, 2)],
             )
