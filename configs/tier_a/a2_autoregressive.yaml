@@ -1,5 +1,5 @@
 # A2: s2 = autoregressive - the brick that makes cell membership itself
-# differentiable (closes gap 1, CLAUDE.md §7).
+# differentiable.
 tier: A
 config_id: A2
 s1: gcn

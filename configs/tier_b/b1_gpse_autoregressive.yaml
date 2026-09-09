@@ -1,6 +1,6 @@
 # B1: s1=gpse, s2=autoregressive - crosses the two most promising bricks so
 # A1/A2's individual effects plus this interaction answer "is the
-# combination better than the sum of its parts?" (CLAUDE.md §9).
+# combination better than the sum of its parts?".
 tier: B
 config_id: B1
 s1: gpse

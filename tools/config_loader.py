@@ -1,4 +1,4 @@
-# Loads a pipeline config (CLAUDE.md §9's R / Tier A / Tier B / Tier C) from
+# Loads a pipeline config (the R / Tier A / Tier B / Tier C definitions) from
 # a declarative YAML file under configs/. Kept deliberately tiny: the file
 # IS the config (five brick strings + kwargs), this module only reads it and
 # checks it against the same validator DMDModel itself uses, so an invalid

@@ -140,7 +140,7 @@ def test_autoregressive_never_repeats_a_member_within_a_cell():
 
 def test_autoregressive_gradient_reaches_membership_parameters():
     """
-    The key contrast test (CLAUDE.md §11): with s2=autoregressive, gradient
+    The key contrast test: with s2=autoregressive, gradient
     reaches the parameters that decide MEMBERSHIP (the GRU/query scorer
     conditioning each step's Gumbel-softmax) - a class of parameter `topk`
     has no equivalent of, since its only parameter (`W`) only ever sees

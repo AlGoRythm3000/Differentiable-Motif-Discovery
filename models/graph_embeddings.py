@@ -67,7 +67,8 @@ class PSEExplicitEncoder(nn.Module):
     Stage 1 rich brick `pse_explicit`: LapPE + RWSE computed with PyG
     transforms (`tools/gpse_cache.py::compute_explicit_pe`), concatenated with
     the raw node features and fed through a small GCN/GIN backbone - the
-    mandatory fallback for `gpse` (§4.1), also directly selectable on its own.
+    mandatory fallback for `gpse` when its checkpoint is unavailable, also
+    directly selectable on its own.
     """
 
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int,
@@ -108,9 +109,9 @@ class PSEExplicitEncoder(nn.Module):
 class GPSEEncoder(nn.Module):
     """
     Stage 1 rich brick `gpse`: frozen pretrained structural encoder (Canturk
-    et al. 2024). Answers the chicken-and-egg problem noted in CLAUDE.md
-    §4.1 - Stage 2's candidate proposal is otherwise fed by a GNN that already
-    suffers the oversquashing this whole project tries to fix. GPSE is
+    et al. 2024). Answers a chicken-and-egg problem: Stage 2's candidate
+    proposal is otherwise fed by a GNN that already suffers the oversquashing
+    this whole project tries to fix. GPSE is
     pretrained (MolPCBA) purely on graph STRUCTURE, from random input
     features, so it is not damaged by our graph's bottlenecks.
 
@@ -126,14 +127,14 @@ class GPSEEncoder(nn.Module):
       - `node_pe` given (the fast path): a precomputed `pestat_GPSE` tensor,
         already batched in the same row order as `x` - this is what
         `tools/gpse_cache.py::attach_gpse_cache` produces once per dataset
-        and every grid run then reuses (§4.1: "recomputed hundreds of times
-        in the grid" otherwise).
+        and every grid run then reuses (it would otherwise be recomputed
+        hundreds of times across the grid).
       - `node_pe=None` (the slow/live path): runs the frozen model on the fly
         via `tools/gpse_cache.py::compute_gpse_live` - used by isolated unit
         tests and ad-hoc single-graph calls (e.g. `infer.py`) that never went
         through the dataset-level cache.
 
-    Fallback (mandatory, not optional - §4.1): if the pretrained checkpoint
+    Fallback (mandatory, not optional): if the pretrained checkpoint
     cannot be fetched (a Kaggle session without internet, e.g.), construction
     falls back to `PSEExplicitEncoder` transparently and every `forward` call
     is delegated to it. `self.actual_encoder` ("gpse" or "pse_explicit")

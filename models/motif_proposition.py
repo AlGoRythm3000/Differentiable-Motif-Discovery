@@ -143,7 +143,7 @@ class AutoregressiveProposal(nn.Module):
     Stage 2 rich brick: builds each candidate cell member-by-member instead of
     one hard top-k per anchor - member 1 conditioned on the anchor, member 2
     on {anchor, member 1}, and so on. This is the brick that makes membership
-    differentiable (closes gap 1 of CLAUDE.md §7): at every step, "who gets
+    differentiable: at every step, "who gets
     picked next" is a Gumbel-softmax distribution whose SHAPE (not just the
     logit value at whichever index a hard selection lands on) is a smooth
     function of Z and this module's parameters - unlike `topk`, where nudging
@@ -151,7 +151,7 @@ class AutoregressiveProposal(nn.Module):
     exception at the swap boundary), so only the retained values' magnitude
     carries a gradient, never the membership choice itself.
 
-    Motivation (kept here per convention): independent similarity sampling
+    Motivation: independent similarity sampling
     p(u|v) ~ exp(sim(z_v, z_u)) scores every candidate in isolation and cannot
     express long cycles - each pick is blind to the others. Conditioning
     sequentially on the running set lets the model learn "given what is
@@ -164,7 +164,7 @@ class AutoregressiveProposal(nn.Module):
     (masked) candidate via a bilinear form against Z.
 
     Cell size: FIXED at `max_size` members (anchor included), clamped per
-    batch exactly like `top_k` is - the spec's documented stability fallback.
+    batch exactly like `top_k` is - a deliberate stability fallback.
     A learned halting probability (variable-length cells) is left as a
     follow-on if this proves unstable; using a fixed length and logging it
     (this docstring) is the honest choice over an unlogged unstable one.
@@ -273,7 +273,7 @@ class CycleBasisProposal(nn.Module):
     docstring) - a graph contributes one cell per independent cycle, which can
     be zero (a tree/forest has none).
 
-    This is the proposal `s5=tnn` requires (CLAUDE.md §4.5): a cycle is
+    This is the proposal `s5=tnn` requires: a cycle is
     exactly a cell whose boundary is a valid 1-cycle in the 1-skeleton, which
     is what makes building a genuine cell complex on top of it well-defined -
     unlike `topk`/`autoregressive`'s arbitrary node sets.

@@ -4,9 +4,9 @@
 # the same registry-brick shape as every other stage): flattens accepted
 # cells into weighted star edges and runs a second GCN pass over the union
 # with the original 1-skeleton. There is no genuine complex at
-# message-passing time - this is gap 3 of CLAUDE.md §7.
+# message-passing time - one of the known limitations this simple brick accepts.
 #
-# Stage 5 rich bricks (feat/rich-bricks, §4.5):
+# Stage 5 rich bricks (feat/rich-bricks):
 #   `tnn`            - a real cell complex (nodes / original edges / accepted
 #                       cycles as 2-cells), message-passed with TopoModelX's
 #                       CWNLayer (Bodnar et al. 2021). Only valid together
@@ -15,7 +15,7 @@
 #   `hypergraph_tnn` - accepted cells (from ANY proposal) become hyperedges,
 #                       message-passed with TopoModelX's UniGCNLayer
 #                       (Huang & Yang 2021). The valid-for-any-proposal
-#                       fallback the spec calls for.
+#                       fallback.
 #
 # Every brick keeps the contract
 #     forward(Z, edge_index, candidates, alpha, num_nodes, batch=None)
@@ -24,7 +24,7 @@
 # `rewired_edge_index`/`rewired_edge_weight` (the rank-0 view) are always
 # populated the same way `gnn_rewired` computes them - `tools/osq_proxies.py`
 # / `tools/osq_metrics.py` always score that 1-skeleton restriction, never a
-# brick-specific structure (§4.5's last paragraph).
+# brick-specific structure.
 
 from typing import Optional
 

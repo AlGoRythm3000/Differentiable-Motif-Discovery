@@ -147,7 +147,7 @@ def test_mini_gnn_requires_node_index_and_edge_index():
 
 def test_triangle_vs_path_only_mini_gnn_tells_them_apart():
     """
-    The test that proves mini_gnn buys what CLAUDE.md §4.3 claims: a triangle
+    The test that proves what mini_gnn buys over DeepSets: a triangle
     and a 3-path on the SAME node set (same features, same cell size) must
     give DIFFERENT embeddings for mini_gnn (it sees the induced edges) and
     IDENTICAL embeddings for DeepSets (it only ever sees the bag of nodes).

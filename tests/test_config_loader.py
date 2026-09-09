@@ -1,5 +1,5 @@
-# CLAUDE.md §11: "every Tier A/B/C config instantiates" - loaded from the
-# actual declarative files under configs/, not a hand-copied list, so this
+# Every Tier A/B/C config must instantiate - loaded from the actual
+# declarative files under configs/, not a hand-copied list, so this
 # test fails the moment a real config file goes stale.
 
 import pytest
@@ -10,7 +10,7 @@ from tools.config_loader import load_all_configs, load_pipeline_config, pipeline
 
 def test_load_all_configs_finds_every_declared_config():
     configs = load_all_configs("configs")
-    # R + Tier A (9, including A0) + Tier B (4) + Tier C (2) = 16, per CLAUDE.md §9.
+    # R + Tier A (9, including A0) + Tier B (4) + Tier C (2) = 16.
     assert len(configs) == 16
     assert {"R", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"} <= set(configs)
     assert {"B1", "B2", "B3", "B4"} <= set(configs)

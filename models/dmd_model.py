@@ -16,7 +16,7 @@ from models.registry import (STAGE1_ENCODERS, STAGE2_PROPOSALS, STAGE3_CELL_ENCO
 class DMDModel(nn.Module):
     """
     Orchestrates Stages 1->5 of the pipeline via the per-stage registries
-    (models/registry.py, CLAUDE.md §5): `s1..s5` select each stage's brick by
+    (models/registry.py): `s1..s5` select each stage's brick by
     string, `s{n}_kwargs` carries that brick's constructor kwargs beyond the
     shared dims. Stage 6 (the loss, including the OSq term) lives in
     tools/losses.py and consumes the `structure` dict this model's forward

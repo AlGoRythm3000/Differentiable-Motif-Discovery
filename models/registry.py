@@ -1,4 +1,4 @@
-# Per-stage brick registries (CLAUDE.md §5): every brick selectable by a
+# Per-stage brick registries: every brick selectable by a
 # config string, so assembling a DMDModel is data (five strings + kwargs)
 # rather than code. Every brick within a stage keeps that stage's forward
 # contract (documented in its own module), so swapping the string is always a
@@ -44,7 +44,7 @@ STAGE5_MP: Dict[str, Callable] = {
 }
 
 # Cells whose boundary is an actual cycle in the 1-skeleton are what a cell
-# complex's 2-cells require (CLAUDE.md §4.5) - today only `cycle_basis`
+# complex's 2-cells require - today only `cycle_basis`
 # guarantees that. `hypergraph_tnn` has no such requirement (any node subset
 # is a legitimate hyperedge), which is exactly why it is the fallback for
 # every other proposal.

@@ -1,4 +1,4 @@
-# Registry-level tests (CLAUDE.md §11): every brick is a drop-in swap at its
+# Registry-level tests: every brick is a drop-in swap at its
 # stage's call site, and the config validator rejects the one known-invalid
 # combination (`tnn` without `cycle_basis`) with a clear error.
 

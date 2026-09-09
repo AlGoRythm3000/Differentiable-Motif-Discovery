@@ -65,8 +65,8 @@ def test_pse_explicit_gradient_flows_to_backbone():
 # GPSEEncoder (feat/rich-bricks). These tests exercise whichever path
 # construction actually resolves to (real pretrained GPSE if the checkpoint
 # fetches, pse_explicit otherwise) - both are asserted to behave correctly,
-# and `actual_encoder` says which one ran (never silently degrades - §4.1's
-# guardrail).
+# and `actual_encoder` says which one ran (it must never silently degrade
+# without recording which encoder was used).
 # --------------------------------------------------------------------------
 
 def test_gpse_encoder_frozen_and_shape_concat_mode():
