@@ -607,8 +607,8 @@ def _collect(out: str, with_raw: bool = False) -> None:
 @app.local_entrypoint()
 def main(stage: str = "full", out: str = "results/modal", seeds: str = "0",
          folds: int = 10, only_tier: str = "", only_config: str = "",
-         proxies: str = "", dry_run: bool = False, gpse: bool = True,
-         with_raw: bool = False):
+         proxies: str = "", gammas: str = "", dry_run: bool = False,
+         gpse: bool = True, with_raw: bool = False):
     """
     stage:       prepare | calibrate | full | collect
     out:         for calibrate/full, the NAME (its basename) of the directory
@@ -620,10 +620,22 @@ def main(stage: str = "full", out: str = "results/modal", seeds: str = "0",
                  estimate, so one seed is usually the right answer and a second
                  seed buys far less than a sixth dataset would.
     only_tier:   restrict to "A" / "B" / "C" (empty = all)
-    only_config: restrict to one config_id. Defaults to "A0" for `calibrate`,
-                 which is the point of that stage: gamma and the proxy are
-                 properties of the objective, so they are selected once on the
-                 reference column rather than re-swept inside every brick.
+    only_config: comma-separated config_ids to restrict to. Defaults to "A0"
+                 for `calibrate`, which is the point of that stage: gamma and
+                 the proxy are properties of the objective, so they are selected
+                 once on the reference column rather than re-swept inside every
+                 brick. A LIST is what makes a single-axis sweep possible:
+                 `--only-config A0,A4,A5` is the three cell encoders and nothing
+                 else, run into one directory so the comparison is one table
+                 rather than three that have to be stitched together.
+    gammas:      comma-separated override of the gamma arm(s). Empty keeps the
+                 stage's own choice - the {0, best_gamma} pair for `full`, the
+                 sweep for `calibrate`. `--gammas 0.0` isolates an axis that
+                 does not touch the objective: at gamma=0 DMDLoss short-circuits
+                 osq_fn entirely, so the result does not depend on WHAT the
+                 rewired structure looks like to the proxy. That is what lets
+                 the cell-encoder comparison be run now, while the rank-0
+                 structure the proxy scores (star vs. clique) is still open.
     with_raw:    `collect` only - also pull every raw/<run_id>.json (config,
                  per-epoch history, split indices). Off by default: runs.csv is
                  enough for results/select_gamma_proxy.py and the analysis
@@ -658,16 +670,29 @@ def main(stage: str = "full", out: str = "results/modal", seeds: str = "0",
     seed_list = [int(s) for s in seeds.split(",") if s.strip()]
     proxy_list = [p.strip() for p in proxies.split(",") if p.strip()]
     config = _build_config(stage, seed_list, folds, proxies=proxy_list)
+    gamma_list = [float(g) for g in gammas.split(",") if g.strip()]
+    if gamma_list:
+        config.gammas = gamma_list
     config.commit_sha = environment_info(".").get("commit_sha", "unknown")
 
     if not only_config and stage == "calibrate":
         only_config = "A0"
+    config_ids = [c.strip() for c in only_config.split(",") if c.strip()]
 
     plan = build_plan(config)
     if only_tier:
         plan = [spec for spec in plan if spec.tier == only_tier]
-    if only_config:
-        plan = [spec for spec in plan if spec.config_id == only_config]
+    if config_ids:
+        plan = [spec for spec in plan if spec.config_id in config_ids]
+
+    # A misspelt --only-config filters the plan down to nothing, and an empty
+    # plan is indistinguishable from a finished one at the `already >= len(plan)`
+    # check below (0 >= 0), which would report "nothing to do" and exit 0. Fail
+    # loudly instead - a launch that quietly does nothing is worse than an error.
+    if not plan:
+        raise SystemExit(
+            f"empty plan: nothing matches config(s) {config_ids or ['all']} in tier "
+            f"{only_tier or 'A+B+C'}. Check the ids against configs/tier_*/.")
 
     out_name = os.path.basename(os.path.normpath(out))
 
