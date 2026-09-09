@@ -71,6 +71,56 @@ def stratified_split(labels, train_frac: float = 0.8, val_frac: float = 0.1, see
     return sorted(train_idx), sorted(val_idx), sorted(test_idx)
 
 
+def stratified_kfold(labels, n_splits: int = 10, seed: int = 0):
+    """
+    Class-balanced k-fold cross-validation splits, as a list of
+    `(train_idx, val_idx, test_idx)` triples - the standard TUDataset protocol
+    (Morris et al. 2020), and the reason it is here rather than another
+    `stratified_split` seed.
+
+    A single 80/10/10 split leaves MUTAG with **20 test graphs**: one graph is
+    5 accuracy points, so every MUTAG number in the feat/rich-bricks grid is a
+    multiple of 5 and the seed-to-seed standard deviations run to 8-13 points.
+    No amount of extra seeds fixes that, because they all re-measure a
+    20-graph test set. Under k-fold every graph is a test graph exactly once,
+    so the pooled estimate is over all 188 - a resolution gain of an order of
+    magnitude for the same compute.
+
+    It also decouples the two things `seed` used to conflate: the fold decides
+    the split, `seed` decides the initialisation. A "seed effect" in the old
+    grid was a split effect and an init effect added together, with no way to
+    separate them after the fact.
+
+    Fold i holds out block i as test and block (i+1) % k as validation, so
+    train/val/test stay disjoint and validation is never drawn from the test
+    fold. Returns index lists, not data, so a run can store exactly which
+    graphs it saw.
+    """
+    if n_splits < 3:
+        raise ValueError("n_splits must be >= 3 (fold i tests on block i and validates on i+1)")
+
+    labels = torch.as_tensor(labels).view(-1)
+    rng = np.random.RandomState(seed)
+
+    # Deal each class's shuffled indices round-robin into k blocks, so every
+    # block carries that class in its dataset-wide proportion.
+    blocks = [[] for _ in range(n_splits)]
+    for class_id in labels.unique().tolist():
+        idx = (labels == class_id).nonzero(as_tuple=False).view(-1).tolist()
+        rng.shuffle(idx)
+        for position, index in enumerate(idx):
+            blocks[position % n_splits].append(index)
+
+    folds = []
+    for i in range(n_splits):
+        test_idx = sorted(blocks[i])
+        val_idx = sorted(blocks[(i + 1) % n_splits])
+        held_out = set(test_idx) | set(val_idx)
+        train_idx = sorted(j for block in blocks for j in block if j not in held_out)
+        folds.append((train_idx, val_idx, test_idx))
+    return folds
+
+
 def path_of_cliques_dataset(num_cliques: int = 8, clique_size: int = 6, feature_dim: int = 16,
                              train_frac: float = 0.6, val_frac: float = 0.2, seed: int = 0) -> Data:
     """

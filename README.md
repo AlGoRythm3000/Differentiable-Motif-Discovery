@@ -141,14 +141,41 @@ writes an append-only results tree (`runs.csv`, `epochs.csv`, `env.json`,
 on every row, never overwrites an existing `run_id`, and stores the OSq measurement
 **before and after** the lifting for each run. `run_id` is
 `f"{tier}_{config_id}_{dataset}_g{gamma}_s{seed}"`.
-`notebooks/kaggle_rich_bricks.ipynb` is the self-contained, sharded Kaggle front-end: it
-clones a pinned branch, precomputes/caches GPSE encodings for whichever datasets need them,
-runs one shard of the grid, and zips the results.
+`run_id` gains a `_p<proxy>` segment when the proxy is being swept and a `_f<fold>`
+suffix under cross-validation; without those axes it keeps its historical shape, so an
+older results tree still resumes.
 
 The grid includes a synthetic arm from `tools/synthetic.py` (bottleneck graph families with
 a query/answer matching task that cannot be solved without pushing information across the
 bottleneck). That arm is the falsification core — it is where an OSq-guided lifting is
-supposed to win — and the runtime guard never drops it.
+supposed to win — and `run_grid` says so out loud if a plan is missing it.
+
+**Protocol.** Evaluation is stratified k-fold cross-validation (`utils.stratified_kfold`,
+`GridConfig.cv_folds`, default 10). A single 80/10/10 split leaves MUTAG with 20 test
+graphs — one graph is 5 accuracy points — which no number of seeds can fix, because they
+all re-measure the same 20 graphs. Under k-fold every graph is a test graph exactly once.
+The fold layout is fixed across the whole grid and does **not** depend on `seed`: the fold
+chooses the split, the seed chooses the initialisation, so paired deltas compare arms on
+literally the same graphs and a "seed effect" is no longer a split effect in disguise.
+
+**Running it (Modal).** `modal_grid.py` is the runner:
+
+```bash
+modal run modal_grid.py --stage prepare                 # datasets + GPSE cache, once
+modal run modal_grid.py --stage calibrate --out results/calibrate   # select gamma & proxy
+modal run modal_grid.py --stage full --out results/full            # the grid
+```
+
+One container per run, so a diverged run cannot poison anything but itself; no shared wall
+clock, so nothing is silently trimmed out of the plan; results stream back locally as each
+run finishes, so an interrupted sweep resumes. `--dry-run` prints the plan without
+spending anything. `notebooks/kaggle_rich_bricks.ipynb` is the previous sharded Kaggle
+front-end, kept for reference — [docs/experiment-protocol-postmortem.md](docs/experiment-protocol-postmortem.md) records why it was replaced.
+
+**Calibration comes first.** `--stage calibrate` sweeps `gamma` and the OSq proxy on the
+reference column (A0) before the grid commits to either. This step had never been run: the
+proxy grid only ever tested `gamma ∈ {0, 0.01}`, and the brick grid then ran at
+`gamma = 0.1`, a value nothing had evaluated.
 
 ## How to reproduce the results
 
@@ -167,6 +194,22 @@ The pretrained GPSE weights are not tracked by git (~254 MiB). Fetch them once w
 conda env create --file=environment.yml
 conda activate dmd
 ```
+
+`environment.yml` pins `pytorch-cuda=11.8`, so it needs an NVIDIA GPU. On a
+CPU-only machine — which is enough to run the test suite and to *drive* a Modal
+sweep, since the training itself happens in the cloud — build the environment
+from conda-forge and CPU wheels instead:
+
+```bash
+conda create -y -n dmd -c conda-forge --override-channels python=3.11
+conda activate dmd
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+pip install torch_geometric networkx pyyaml scipy pytest matplotlib pandas modal
+```
+
+conda-forge rather than the default channels because the latter now require
+accepting Anaconda's Terms of Service interactively, which a setup script
+cannot do on your behalf.
 
 ```bash
 Differentiable-Motif-Discovery/

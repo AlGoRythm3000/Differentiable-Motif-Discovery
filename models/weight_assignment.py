@@ -191,6 +191,30 @@ class REINFORCESelector(nn.Module):
         self.last_log_prob = None
 
     def forward(self, scores: torch.Tensor) -> torch.Tensor:
+        # `torch.bernoulli` on CUDA validates 0 <= p <= 1 inside the kernel, so a
+        # NaN probability raises a DEVICE-SIDE ASSERT: an asynchronous, unrecoverable
+        # error that poisons the CUDA context for the rest of the process, surfaces at
+        # whatever unrelated line next synchronizes, and makes every subsequent run in
+        # the same process die at `torch.manual_seed`. That is exactly how 36 runs of
+        # the feat/rich-bricks grid were lost - one diverged A7 run, 35 collateral.
+        # `clamp` does NOT help: it propagates NaN rather than clipping it.
+        #
+        # This is the one brick that can hand a non-finite value to a kernel that
+        # asserts on it (REINFORCE's score-function gradient is unbounded in variance,
+        # so `scores` genuinely can blow up), so it is the one brick that checks. The
+        # check costs one small device sync per forward and turns an unrecoverable
+        # context poisoning into an ordinary Python exception the grid can catch,
+        # record, and continue past.
+        if not torch.isfinite(scores).all():
+            raise RuntimeError(
+                "REINFORCESelector received non-finite proposal scores "
+                f"({int((~torch.isfinite(scores)).sum())} of {scores.numel()} entries). "
+                "Training has diverged - the score-function estimator's variance is "
+                "unbounded, so this needs gradient clipping or a lower learning rate. "
+                "Raising here on purpose: torch.bernoulli would otherwise trigger a "
+                "device-side assert and poison the CUDA context for every later run."
+            )
+
         probs = torch.sigmoid(scores)
 
         if not self.training:

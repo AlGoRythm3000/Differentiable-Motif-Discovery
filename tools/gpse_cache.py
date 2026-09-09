@@ -4,20 +4,19 @@
 # with a virtual node) relative to everything else in this pipeline, and it does
 # not depend on the downstream task at all - so it is computed ONCE per dataset
 # and cached, not recomputed every forward pass across a 26-config x 2-gamma x
-# 6-dataset x 3-seed grid (CLAUDE.md §4.1: "it matters - it is otherwise
-# recomputed hundreds of times in the grid").
+# 6-dataset x 3-seed grid, where it would otherwise be recomputed hundreds of
+# times.
 #
 # Wraps PyG's own `torch_geometric.nn.models.gpse` module
 # (`GPSE.from_pretrained` + `precompute_GPSE`/`gpse_process_batch`) - the
-# pretrained checkpoint and the official precomputation loop are not
-# reimplemented here, per the "wrap, don't reimplement" guardrail.
+# pretrained checkpoint and the official precomputation loop are wrapped, not
+# reimplemented here.
 #
 # Fallback contract: if the pretrained checkpoint cannot be fetched (Kaggle
 # sessions may run without internet), every function here falls back to
 # `pse_explicit` (LapPE + RWSE via PyG transforms) rather than raising, and
 # reports which one actually ran - a caller that silently ends up on a
-# different encoder without recording it is exactly the failure mode the
-# guardrails call out.
+# different encoder without recording it is exactly the failure mode to avoid.
 
 import logging
 from pathlib import Path
@@ -38,7 +37,8 @@ def compute_explicit_pe(edge_index: torch.Tensor, num_nodes: int,
                          target_dim: int = GPSE_ENCODING_DIM) -> torch.Tensor:
     """
     LapPE + RWSE for a single graph via PyG's own transforms - the mandatory
-    fallback (§4.1). Padded with zeros or truncated to `target_dim` so it is a
+    fallback when the GPSE checkpoint is unavailable. Padded with zeros or
+    truncated to `target_dim` so it is a
     drop-in substitute for a real GPSE encoding wherever one is expected.
     """
     from torch_geometric.data import Data
@@ -140,15 +140,14 @@ def attach_gpse_cache(dataset, cache_path: Optional[str] = None,
                        weights_root: str = "GPSE_pretrained") -> str:
     """
     Attaches `data.pestat_GPSE` [num_nodes, GPSE_ENCODING_DIM] to every graph
-    in `dataset`, in place - the one-per-dataset precomputation §4.1 requires.
+    in `dataset`, in place - the required one-per-dataset precomputation.
     Reuses a cache on disk if `cache_path` already exists; otherwise computes
     (real GPSE if the checkpoint fetches, `pse_explicit` otherwise) and writes
     one if `cache_path` is given.
 
     Returns "gpse" or "pse_explicit" - whichever actually ran. Store this as
-    `s1_encoder_actual` in the results row (§4.1's non-negotiable: a grid that
-    silently degrades to a different encoder without recording it is worse
-    than a failed grid).
+    `s1_encoder_actual` in the results row: a grid that silently degrades to a
+    different encoder without recording it is worse than a failed grid.
     """
     if cache_path is not None and Path(cache_path).exists():
         cached = torch.load(cache_path, map_location="cpu", weights_only=False)
@@ -158,13 +157,31 @@ def attach_gpse_cache(dataset, cache_path: Optional[str] = None,
 
     model = load_pretrained_gpse(pretrained_name, weights_root)
     if model is not None:
-        from torch_geometric.nn.models.gpse import precompute_GPSE
-        
-        # Si le dataset personnalisé n'a pas d'attribut transform, on l'initialise à None
-        if not hasattr(dataset, 'transform'):
-            dataset.transform = None
-            
-        precompute_GPSE(model, dataset)
+        # PyG's `precompute_GPSE` is written against `InMemoryDataset`: it reads
+        # `dataset.data` / `dataset.slices` directly. `tools/synthetic.py`'s
+        # SyntheticGraphDataset is deliberately NOT one (its docstring says so -
+        # the graphs are generated in seconds and never cached, so the collation
+        # machinery would only add failure modes), so that call raises
+        # `AttributeError: 'SyntheticGraphDataset' object has no attribute 'data'`.
+        #
+        # This never surfaced before because the synthetic arm was missing from
+        # the grid that would have exercised it - it is the falsification core,
+        # and s1='gpse' on it had simply never run.
+        #
+        # For those datasets we use this module's own generic path
+        # (`compute_gpse_live`), the same one `GPSEEncoder.forward` falls back to,
+        # which produces the identical encoding from raw tensors. One graph at a
+        # time rather than batched: this runs once per dataset and is cached to
+        # disk afterwards, so the batching complexity would buy seconds once.
+        if hasattr(dataset, "data") and hasattr(dataset, "slices"):
+            from torch_geometric.nn.models.gpse import precompute_GPSE
+
+            if not hasattr(dataset, "transform"):
+                dataset.transform = None
+            precompute_GPSE(model, dataset)
+        else:
+            for data in dataset:
+                data.pestat_GPSE = compute_gpse_live(model, data.edge_index, data.num_nodes)
         source = "gpse"
     else:
         for data in dataset:

@@ -20,8 +20,8 @@ import zipfile
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-# Column names are frozen AS OF feat/rich-bricks (CLAUDE.md §12 fixes this
-# exact list/order). This is a deliberate one-time break from feat/osq-proxy's
+# Column names are frozen AS OF feat/rich-bricks (this exact list and order is
+# fixed). This is a deliberate one-time break from feat/osq-proxy's
 # schema (`proxy` -> `osq_proxy`, `tier`/`config_id` inserted, per-stage brick
 # columns added) - the branch also changes `run_id`'s shape, so the two
 # schemas were never going to share one results/ tree. From here on, the rule
@@ -36,6 +36,22 @@ RUN_COLUMNS: List[str] = [
     "alpha_mean", "alpha_std", "num_cells", "mean_cell_size",
     "r_bar_before", "r_bar_after", "lambda2_before", "lambda2_after", "wc", "nwc",
     "params_count", "runtime_s", "peak_mem_mb", "status", "error",
+    # Appended (never inserted - see the note above) by fix/experiment-protocol:
+    #   fold              cross-validation fold, empty for a single-split run
+    #   n_train/val/test  split sizes as the run actually saw them. `n_test` IS
+    #                     the resolution of that row's accuracy: 20 test graphs
+    #                     means the number can only move in steps of 5 points,
+    #                     which is the single largest reason the previous grid's
+    #                     error bars were unreadable.
+    #   alpha_frac_active fraction of candidate cells with alpha > 0 on the test
+    #                     split, and `collapsed` its verdict. A collapsed run is
+    #                     a plain GCN wearing a brick's name - 41% of the last
+    #                     grid, recoverable only by noticing that r_bar was
+    #                     bit-identical before and after the lifting.
+    #   grad_clip         max gradient norm in force, so a clipped and an
+    #                     unclipped row can never be silently pooled.
+    "fold", "n_train", "n_val", "n_test",
+    "alpha_frac_active", "collapsed", "grad_clip",
 ]
 
 EPOCH_COLUMNS: List[str] = [
@@ -45,13 +61,22 @@ EPOCH_COLUMNS: List[str] = [
 ]
 
 
-def make_run_id(tier: str, config_id: str, dataset: str, gamma: float, seed: int) -> str:
+def make_run_id(tier: str, config_id: str, dataset: str, gamma: float, seed: int,
+                fold: Optional[int] = None, proxy: Optional[str] = None) -> str:
     """
-    Deterministic (CLAUDE.md §12), so a resumed grid recognizes what it
+    Deterministic, so a resumed grid recognizes what it
     already ran and an analysis script can join a row back to its raw file
     without a lookup table.
+
+    `proxy` and `fold` are optional suffix/infix segments so that a run from the
+    historical single-split, single-proxy design keeps byte-identical ids: a
+    results tree produced before cross-validation must still resume, and a
+    figure that references a run_id must still resolve. They are only emitted
+    when the corresponding axis is actually being varied.
     """
-    return f"{tier}_{config_id}_{dataset}_g{gamma}_s{seed}"
+    proxy_part = f"_p{proxy}" if proxy else ""
+    fold_part = f"_f{fold}" if fold is not None else ""
+    return f"{tier}_{config_id}_{dataset}{proxy_part}_g{gamma}_s{seed}{fold_part}"
 
 
 class ResultsStore:
@@ -62,6 +87,11 @@ class ResultsStore:
         self.runs_path = self.out_dir / "runs.csv"
         self.epochs_path = self.out_dir / "epochs.csv"
         self.env_path = self.out_dir / "env.json"
+        # Populated lazily from disk on first use, then kept in step with every
+        # append. Without it `append_run`'s duplicate check re-read and re-parsed
+        # the entire runs.csv on every single row - quadratic, and a grid of a
+        # few thousand runs spends real time on it for no reason.
+        self._known_run_ids: Optional[set] = None
 
     # -- environment ------------------------------------------------------
     def write_env(self, env: dict) -> None:
@@ -70,10 +100,13 @@ class ResultsStore:
 
     # -- runs -------------------------------------------------------------
     def existing_run_ids(self) -> set:
-        if not self.runs_path.exists():
-            return set()
-        with open(self.runs_path, newline="") as f:
-            return {row["run_id"] for row in csv.DictReader(f)}
+        if self._known_run_ids is None:
+            if not self.runs_path.exists():
+                self._known_run_ids = set()
+            else:
+                with open(self.runs_path, newline="") as f:
+                    self._known_run_ids = {row["run_id"] for row in csv.DictReader(f)}
+        return self._known_run_ids
 
     def has_run(self, run_id: str) -> bool:
         return run_id in self.existing_run_ids()
@@ -97,6 +130,7 @@ class ResultsStore:
             if is_new:
                 writer.writeheader()
             writer.writerow({column: row.get(column, "") for column in RUN_COLUMNS})
+        self.existing_run_ids().add(row["run_id"])
 
     def read_runs(self) -> List[dict]:
         if not self.runs_path.exists():

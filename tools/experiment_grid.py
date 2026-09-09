@@ -1,4 +1,4 @@
-# The experiment grid: Tier A/B/C pipeline configs (CLAUDE.md §9, loaded from
+# The experiment grid: Tier A/B/C pipeline configs (loaded from
 # configs/ via tools/config_loader.py) x {gamma=0, gamma=best} x datasets x
 # seeds.
 #
@@ -14,6 +14,7 @@
 # continues - a grid that dies at run 200 of 234 because one dataset had an
 # awkward graph is worse than useless.
 
+import math
 import time
 import traceback
 from dataclasses import dataclass
@@ -39,10 +40,11 @@ SYNTHETIC_ARM = "synthetic_bottleneck"
 # informative first; the synthetic arm is first because it is the only place
 # where an OSq-guided lifting is *supposed* to win, so it is the one arm that
 # must never be dropped.
-DATASET_PRIORITY = (SYNTHETIC_ARM, "MUTAG", "PROTEINS", "IMDB-BINARY", "ENZYMES", "NCI1")
+DATASET_PRIORITY = (SYNTHETIC_ARM, "MUTAG", "ENZYMES", "IMDB-BINARY", "PROTEINS",
+                     "DHFR", "NCI1")
 DROPPABLE_DATASETS = ("NCI1", "ENZYMES")
 
-# §9 priority order: Tier A complete on all datasets; then Tier B on
+# Priority order: Tier A complete on all datasets; then Tier B on
 # MUTAG/PROTEINS/synthetic_bottleneck only; then Tier C. Encoded as a trim
 # order (last tier listed is dropped first) and as Tier B's dataset subset.
 TIER_TRIM_ORDER = ("C", "B")
@@ -55,12 +57,37 @@ class GridConfig:
     datasets: Sequence[str] = ("MUTAG", "PROTEINS", "ENZYMES", "NCI1", "IMDB-BINARY",
                                SYNTHETIC_ARM)
     configs_dir: str = "configs"
-    # The "gamma=<best>" arm (§9): the winning proxy/weight from feat/osq-proxy's
+    # The "gamma=<best>" arm: the winning proxy/weight from feat/osq-proxy's
     # grid. gamma=0 is always crossed alongside it and never calls osq_fn at all
     # (DMDLoss's own short-circuit) - see test_gamma_zero_equivalence.
     best_proxy: str = "r_bar"
     best_gamma: float = 0.1
+    # The gamma arm(s) to cross with every config. `None` keeps the historical
+    # {0, best_gamma} pair; a list runs a genuine sweep.
+    #
+    # Why a sweep is not optional any more: feat/osq-proxy only ever tested
+    # gamma in {0, 0.01}, and feat/rich-bricks then ran its whole grid at
+    # gamma=0.1 - a value no experiment had evaluated - on the strength of a
+    # "best gamma" that was never selected from anything. The proxy choice is
+    # no better: r_bar won at p=0.011 against cf_bc_efc at p=0.031 over 18
+    # pairs with no correction for having tested four proxies, while cf_bc_efc
+    # was ahead on NCI1 and on the synthetic arm. Neither knob has been
+    # selected on evidence yet; `gammas` is what makes that possible.
+    gammas: Optional[Sequence[float]] = None
+    # Proxy arm(s). `None` = `best_proxy` alone (crossed with gamma>0 only,
+    # since gamma=0 never calls the proxy).
+    proxies: Optional[Sequence[str]] = None
     seeds: Sequence[int] = (0, 1, 2)
+
+    # Cross-validation. `None` = the historical single stratified train/val/test
+    # split per seed. An int k = stratified k-fold, `seed` then controlling only
+    # initialisation. See utils.stratified_kfold for why this is the default the
+    # protocol should have had: a single 80/10/10 split gives MUTAG a 20-graph
+    # test set, i.e. 5 accuracy points of resolution.
+    cv_folds: Optional[int] = 10
+    # Seed of the fold layout itself. Fixed across the grid on purpose: every
+    # arm must be evaluated on the same folds or the paired deltas mean nothing.
+    cv_seed: int = 0
 
     epochs: int = 200
     patience: int = 30
@@ -69,6 +96,11 @@ class GridConfig:
     batch_size: int = 32
     hidden_dim: int = 64
     sparsity_weight: float = 0.05
+    # Max global gradient norm. Not decoration: an unclipped REINFORCE step is
+    # what drove Stage 4's scores to NaN and cost the previous grid 36 runs
+    # (models/weight_assignment.py). Applied to every arm so that a clipped and
+    # an unclipped arm are never compared with each other.
+    grad_clip: Optional[float] = 1.0
 
     hutch_k: int = DEFAULT_HUTCH_K
     cg_tol: float = DEFAULT_CG_TOL
@@ -103,10 +135,13 @@ class RunSpec:
     dataset: str
     gamma: float
     seed: int
+    fold: Optional[int] = None
+    proxy: Optional[str] = None
 
     @property
     def run_id(self) -> str:
-        return make_run_id(self.tier, self.config_id, self.dataset, self.gamma, self.seed)
+        return make_run_id(self.tier, self.config_id, self.dataset, self.gamma, self.seed,
+                           fold=self.fold, proxy=self.proxy)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +161,7 @@ def build_plan(config: GridConfig) -> List[RunSpec]:
 
     Ordered Tier A (all datasets) -> Tier B (3 datasets) -> Tier C (all
     datasets), so a plan truncated by the runtime guard degrades in exactly
-    the priority order §9 specifies.
+    the intended priority order.
     """
     all_configs = load_all_configs(config.configs_dir)
     by_tier = {"A": [], "B": [], "C": []}
@@ -138,15 +173,32 @@ def build_plan(config: GridConfig) -> List[RunSpec]:
 
     datasets_all = _sorted_datasets(config.datasets)
     datasets_b = _sorted_datasets([d for d in TIER_B_DATASETS if d in config.datasets])
-    gammas = (0.0, config.best_gamma) if config.best_gamma != 0.0 else (0.0,)
+
+    if config.gammas is not None:
+        gammas = tuple(config.gammas)
+    else:
+        gammas = (0.0, config.best_gamma) if config.best_gamma != 0.0 else (0.0,)
+    # `None` rather than `(config.best_proxy,)`: leaving RunSpec.proxy unset
+    # keeps run_ids byte-identical to the single-proxy design (run_single falls
+    # back to `config.best_proxy`), so a results tree from before the sweep
+    # still resumes and every stored figure still resolves its rows.
+    proxies = tuple(config.proxies) if config.proxies is not None else (None,)
+    folds = range(config.cv_folds) if config.cv_folds else (None,)
 
     plan: List[RunSpec] = []
     for tier, datasets in (("A", datasets_all), ("B", datasets_b), ("C", datasets_all)):
         for pconfig in by_tier[tier]:
             for dataset in datasets:
                 for gamma in gammas:
-                    for seed in config.seeds:
-                        plan.append(RunSpec(tier, pconfig["config_id"], dataset, gamma, seed))
+                    # gamma=0 short-circuits osq_fn entirely (DMDLoss), so the
+                    # proxies are indistinguishable there - running one arm per
+                    # proxy at gamma=0 would be the same run stored under
+                    # several names.
+                    for proxy in ((None,) if gamma == 0.0 else proxies):
+                        for seed in config.seeds:
+                            for fold in folds:
+                                plan.append(RunSpec(tier, pconfig["config_id"], dataset,
+                                                    gamma, seed, fold=fold, proxy=proxy))
     return plan
 
 
@@ -254,15 +306,31 @@ def _labels_of(dataset) -> torch.Tensor:
     return torch.as_tensor(y).view(-1)
 
 
-def make_splits(dataset, config: GridConfig, seed: int):
+def make_splits(dataset, config: GridConfig, seed: int, fold: Optional[int] = None):
     """
-    Stratified 80/10/10 split, seeded per run, returned together with the index
-    lists so the exact split can be stored in the run's raw file.
+    The run's train/val/test loaders plus the index lists, so the exact split is
+    stored in the run's raw file.
+
+    Two regimes. With `config.cv_folds` set (the default) and a `fold` given,
+    this is stratified k-fold: the fold picks the split, `seed` only picks the
+    initialisation, and the fold layout is shared across every arm so paired
+    comparisons are on literally the same graphs. Without them it falls back to
+    the historical single stratified `train_frac`/`val_frac` split seeded by
+    `seed` - kept so an old plan reproduces exactly.
+
+    The k-fold layout deliberately does NOT depend on `seed`: if it did, two
+    arms differing only in seed would be measured on different test sets and
+    the pairing that every delta in the analysis relies on would be gone.
     """
     from torch_geometric.loader import DataLoader
 
-    train_idx, val_idx, test_idx = utils.stratified_split(
-        _labels_of(dataset), config.train_frac, config.val_frac, seed=seed)
+    if config.cv_folds and fold is not None:
+        folds = utils.stratified_kfold(_labels_of(dataset), n_splits=config.cv_folds,
+                                       seed=config.cv_seed)
+        train_idx, val_idx, test_idx = folds[fold]
+    else:
+        train_idx, val_idx, test_idx = utils.stratified_split(
+            _labels_of(dataset), config.train_frac, config.val_frac, seed=seed)
 
     splits = graph_classification.GraphSplits(
         DataLoader(dataset[train_idx], batch_size=config.batch_size, shuffle=True),
@@ -278,17 +346,56 @@ def make_splits(dataset, config: GridConfig, seed: int):
 
 @torch.no_grad()
 def alpha_statistics(model, splits) -> dict:
-    """Mean/std of the acceptance weights, cell count, and mean cell size."""
+    """
+    Acceptance-weight statistics over the WHOLE test split, plus the collapse
+    diagnostic.
+
+    Collapse is the failure mode this project has to be able to see. When every
+    alpha is 0 the lifting adds only zero-weight edges, so the rewired structure
+    is the original graph, `motif_embeddings` is identically zero, and the model
+    silently degenerates to a plain GCN. It still trains, still reports an
+    accuracy, and still gets averaged into a brick's mean - it just is not the
+    model whose name is on the row. In the feat/rich-bricks grid this happened in
+    63 of 154 usable runs (41%), including all 15 of the GPSE arm's gamma=0 runs,
+    and nothing in the schema recorded it: it had to be reverse-engineered from
+    `r_bar_before == r_bar_after`. Hence `collapsed` and `alpha_frac_active` as
+    first-class columns.
+
+    Measured over every test batch rather than only the first one, which is what
+    the previous version did - a per-batch verdict on a 32-graph sample is not a
+    verdict on the run.
+    """
     model.eval()
-    batch = next(iter(splits.test_mask)).to(next(model.parameters()).device)
-    _, structure = model(batch.x, batch.edge_index, batch=batch.batch,
-                          node_pe=getattr(batch, "pestat_GPSE", None))
-    alpha = structure["alpha"]
-    candidates = structure["candidates"]
-    mean_cell_size = (float(candidates.node_index.numel()) / alpha.numel()) if alpha.numel() else 0.0
-    return {"alpha_mean": float(alpha.mean().item()) if alpha.numel() else 0.0,
-            "alpha_std": float(alpha.std(unbiased=False).item()) if alpha.numel() else 0.0,
-            "num_cells": int(alpha.numel()), "mean_cell_size": mean_cell_size}
+    device = next(model.parameters()).device
+    total, sum_alpha, sum_sq, active, slots = 0, 0.0, 0.0, 0, 0
+
+    for batch in splits.test_mask:
+        batch = batch.to(device)
+        _, structure = model(batch.x, batch.edge_index, batch=batch.batch,
+                              node_pe=getattr(batch, "pestat_GPSE", None))
+        alpha = structure["alpha"]
+        if alpha.numel() == 0:
+            continue
+        total += int(alpha.numel())
+        sum_alpha += float(alpha.sum().item())
+        sum_sq += float((alpha ** 2).sum().item())
+        active += int((alpha > 0).sum().item())
+        slots += int(structure["candidates"].node_index.numel())
+
+    if total == 0:
+        return {"alpha_mean": 0.0, "alpha_std": 0.0, "num_cells": 0, "mean_cell_size": 0.0,
+                "alpha_frac_active": 0.0, "collapsed": True}
+
+    mean = sum_alpha / total
+    variance = max(sum_sq / total - mean ** 2, 0.0)
+    frac_active = active / total
+    return {"alpha_mean": mean, "alpha_std": variance ** 0.5,
+            "num_cells": total, "mean_cell_size": slots / total,
+            "alpha_frac_active": frac_active,
+            # Not `mean == 0`: a run that accepts a handful of cells out of
+            # thousands is a collapse in every way that matters to the claim,
+            # and a soft selector makes exact zeros rare. 1% is the threshold.
+            "collapsed": frac_active < 0.01}
 
 
 def run_single(spec: RunSpec, config: GridConfig, pipeline_config: dict, dataset, num_features: int,
@@ -298,9 +405,9 @@ def run_single(spec: RunSpec, config: GridConfig, pipeline_config: dict, dataset
     failure - the caller decides what to do with the traceback.
     """
     utils.set_seed(spec.seed)
-    splits, split_indices = make_splits(dataset, config, spec.seed)
+    splits, split_indices = make_splits(dataset, config, spec.seed, fold=spec.fold)
 
-    proxy = config.best_proxy if spec.gamma > 0 else "none"
+    proxy = (spec.proxy or config.best_proxy) if spec.gamma > 0 else "none"
 
     # One width knob: latent and motif dimensions follow `hidden_dim`. The grid
     # varies the objective and the pipeline stages, not the base width - a run
@@ -322,8 +429,28 @@ def run_single(spec: RunSpec, config: GridConfig, pipeline_config: dict, dataset
     best_val, best_epoch, best_state, best_test = -1.0, 0, None, 0.0
     epochs_ran = 0
 
+    # Stage 4's k-subset brick documents a temperature annealed towards
+    # `tau_min` over training and states that "the grid runner calls this once
+    # per epoch". It did not: `set_temperature` had no caller anywhere in the
+    # repo, so A6 ran its entire arm at the fixed initial tau. Honoured here,
+    # with the standard exponential Gumbel schedule (Jang et al. 2017),
+    # `set_temperature` applying the tau_min floor itself.
+    #
+    # Note for whoever sets `s4_kwargs`: at the shipped default anneal_rate=1e-4
+    # this schedule is nearly flat over 200 epochs (tau 1.0 -> 0.98), so A6's
+    # temperature is still effectively fixed. That is a choice for the config to
+    # make deliberately, not something to bury in a formula here - raise
+    # `anneal_rate` if the arm is meant to actually anneal.
+    anneal = getattr(model.selector, "set_temperature", None)
+    tau_init = getattr(model.selector, "tau", None)
+    anneal_rate = getattr(model.selector, "anneal_rate", None)
+    can_anneal = anneal is not None and tau_init is not None and anneal_rate is not None
+
     for epoch in range(1, config.epochs + 1):
-        train_metrics = graph_classification.train_step(model, splits, optimizer, criterion)
+        if can_anneal:
+            anneal(tau_init * math.exp(-anneal_rate * epoch))
+        train_metrics = graph_classification.train_step(model, splits, optimizer, criterion,
+                                                        grad_clip=config.grad_clip)
         val_metrics = graph_classification.eval_step(model, splits, criterion, splits.val_mask)
         test_metrics = graph_classification.eval_step(model, splits, criterion, splits.test_mask)
         epochs_ran = epoch
@@ -357,7 +484,10 @@ def run_single(spec: RunSpec, config: GridConfig, pipeline_config: dict, dataset
     row = {
         "run_id": spec.run_id, "commit_sha": config.commit_sha,
         "tier": spec.tier, "config_id": spec.config_id, "dataset": spec.dataset,
-        "seed": spec.seed,
+        "seed": spec.seed, "fold": "" if spec.fold is None else spec.fold,
+        "n_train": len(split_indices["train"]), "n_val": len(split_indices["val"]),
+        "n_test": len(split_indices["test"]),
+        "grad_clip": "" if config.grad_clip is None else config.grad_clip,
         "s1_encoder": pipeline_config["s1"],
         "s1_encoder_actual": getattr(model.embedder, "actual_encoder", pipeline_config["s1"]),
         "s2_proposal": pipeline_config["s2"], "s3_cell_encoder": pipeline_config["s3"],
@@ -411,6 +541,31 @@ def run_grid(config: GridConfig, store: ResultsStore, plan: Optional[List[RunSpe
         # it out rather than storing results that cannot be reproduced.
         config.commit_sha = environment_info().get("commit_sha", "unknown")
     started = time.time()
+    if SYNTHETIC_ARM not in config.datasets and verbose:
+        # The last grid's `datasets` list silently lacked this arm - the notebook
+        # in the repo listed it, the config actually executed did not, and the
+        # omission was only discoverable months later by reading the config
+        # embedded in a raw result file. It is the only arm where an
+        # OSq-guided lifting is *supposed* to win, so a grid without it cannot
+        # falsify anything, only fail to reject.
+        print(f"WARNING: {SYNTHETIC_ARM!r} is not in this grid's datasets. It is the "
+              "falsification core - without it the grid can only show that the lifting "
+              "costs nothing, never that its mechanism works.")
+    if config.time_budget_s is not None and verbose:
+        # The guard that silently deleted two thirds of the last grid. It
+        # projects with a single global mean seconds-per-run, so once a few NCI1
+        # runs (416 s) had landed among MUTAG runs (15 s) it concluded the plan
+        # would not fit, dropped Tier C, Tier B, NCI1 and ENZYMES, and never
+        # revised that downwards - the session then finished in 5.1 h of an 8 h
+        # budget. It is left in place for a sequential session that genuinely has
+        # a hard cutoff, but it is opt-in and it announces itself, because a plan
+        # trimmed in silence is indistinguishable from a plan that was never
+        # written. The Modal runner never sets it: one container per run means
+        # there is no shared wall-clock to protect.
+        print(f"WARNING: time_budget_s={config.time_budget_s}s is set. Runs WILL be dropped "
+              "from this plan if the projection says they do not fit, and the projection is "
+              "a single global mean over datasets whose costs differ by 30x. "
+              "Leave it None unless this session has a hard cutoff.")
     completed, failed, skipped, dropped = 0, 0, 0, []
     cache = {}
     gpse_config_ids = {cid for cid, c in all_configs.items() if c["s1"] == "gpse"}
@@ -437,7 +592,10 @@ def run_grid(config: GridConfig, store: ResultsStore, plan: Optional[List[RunSpe
             error = traceback.format_exc()
             row = {"run_id": spec.run_id, "commit_sha": config.commit_sha,
                    "tier": spec.tier, "config_id": spec.config_id, "dataset": spec.dataset,
-                   "gamma": spec.gamma, "seed": spec.seed, "sparsity_weight": config.sparsity_weight,
+                   "gamma": spec.gamma, "seed": spec.seed,
+                   "fold": "" if spec.fold is None else spec.fold,
+                   "osq_proxy": (spec.proxy or config.best_proxy) if spec.gamma > 0 else "none",
+                   "sparsity_weight": config.sparsity_weight,
                    "status": "failed", "error": error.strip().splitlines()[-1][:300]}
             history, extras = [], {"error": error}
             failed += 1

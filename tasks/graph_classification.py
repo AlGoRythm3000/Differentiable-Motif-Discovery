@@ -62,8 +62,18 @@ def load_dataset(args):
             dataset.num_node_features, dataset.num_classes)
 
 
-def _run_loader(model, loader, criterion, optimizer=None) -> dict:
-    """Shared batch loop: trains if `optimizer` is given, else just evaluates."""
+def _run_loader(model, loader, criterion, optimizer=None, grad_clip=None) -> dict:
+    """
+    Shared batch loop: trains if `optimizer` is given, else just evaluates.
+
+    `grad_clip` (max global gradient norm, None = off) exists for Stage 4's
+    `reinforce` brick above all: the score-function estimator is unbiased but
+    its variance is unbounded, and an unclipped step is what drove `scores` to
+    NaN in the feat/rich-bricks grid - which `torch.bernoulli` then turned into
+    a CUDA device-side assert (see models/weight_assignment.py). Applied to
+    every brick rather than only that one so a clipped and an unclipped arm are
+    never compared to each other.
+    """
     is_train = optimizer is not None
     model.train(is_train)
 
@@ -87,6 +97,8 @@ def _run_loader(model, loader, criterion, optimizer=None) -> dict:
 
         if is_train:
             loss_out.total.backward()
+            if grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
 
         bs = batch.num_graphs
@@ -106,8 +118,9 @@ def _run_loader(model, loader, criterion, optimizer=None) -> dict:
     }
 
 
-def train_step(model, data, optimizer, criterion) -> dict:
-    return _run_loader(model, data.train_loader, criterion, optimizer=optimizer)
+def train_step(model, data, optimizer, criterion, grad_clip=None) -> dict:
+    return _run_loader(model, data.train_loader, criterion, optimizer=optimizer,
+                       grad_clip=grad_clip)
 
 
 @torch.no_grad()
