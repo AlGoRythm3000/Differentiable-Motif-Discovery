@@ -4,8 +4,8 @@
 # feat/rich-bricks analysis) to this branch's simpler, DIFFERENT schema:
 # no tier/config_id, no per-stage brick columns, no peak_mem_mb/params_count
 # - the comparison axis here is `proxy` (none/r_bar/lambda2/efc/cf_bc_efc),
-# and each proxy runs at exactly one gamma (none@0.0, everything else@0.01;
-# see CLAUDE.md Sec9), so there is no per-proxy "OSq on/off" split to plot -
+# and each proxy runs at exactly one gamma by design (none@0.0, everything
+# else@0.01), so there is no per-proxy "OSq on/off" split to plot -
 # that split lives entirely between "none" and every other proxy.
 #
 # Produces, under --out-dir (default results/osq_proxy/figures):
@@ -13,10 +13,10 @@
 #   accuracy_by_proxy.csv/.png       mean +/- std test accuracy per proxy, pooled
 #                                    over every dataset x seed
 #   accuracy_on_synthetic_bottleneck.csv/.png
-#       same, restricted to synthetic_bottleneck - CLAUDE.md Sec9 calls this
-#       dataset "the scientific core": it's the one built so an OSq-guided
-#       lifting *should* win, so it gets its own figure rather than being
-#       averaged away with the 5 real benchmark datasets.
+#       same, restricted to synthetic_bottleneck - the scientific core of the
+#       study: it's the one dataset built so an OSq-guided lifting *should*
+#       win, so it gets its own figure rather than being averaged away with
+#       the 5 real benchmark datasets.
 #   runtime_by_dataset.csv/.png      mean +/- std wall-clock runtime per dataset
 #   curves/<run_id>_loss.png, <run_id>_accuracy.png
 #       train/val/test loss and accuracy vs. epoch, for one representative
@@ -51,7 +51,7 @@ COLORS = {
     "test": "#55A868",
 }
 
-# CLAUDE.md Sec5's proxy registry table, condensed to one phrase each - turns
+# The proxy registry, condensed to one phrase each - turns
 # an opaque key like "cf_bc_efc" into something a reader can parse without
 # opening the registry.
 PROXY_LABELS = {
@@ -68,6 +68,10 @@ NUMERIC_RUN_COLUMNS = [
     "sparsity_loss", "osq_loss", "alpha_mean", "alpha_std", "num_cells",
     "r_bar_before", "r_bar_after", "lambda2_before", "lambda2_after",
     "wc", "nwc", "runtime_s",
+    # Appended by fix/experiment-protocol. `fold` deliberately stays a STRING:
+    # it is a pairing key, and an empty fold (a pre-cross-validation row) must
+    # compare equal to itself rather than becoming None.
+    "n_train", "n_val", "n_test", "alpha_frac_active",
 ]
 
 NUMERIC_EPOCH_COLUMNS = [
@@ -337,7 +341,7 @@ def main():
     plot_accuracy_by_proxy(
         synthetic_accuracy, out_dir / "accuracy_on_synthetic_bottleneck.png",
         all_proxies=all_proxies,
-        title_suffix=f"{SYNTHETIC_DATASET} only - the diagnostic arm OSq-lifting should win on (CLAUDE.md Sec9)",
+        title_suffix=f"{SYNTHETIC_DATASET} only - the diagnostic arm OSq-lifting should win on",
     )
 
     runtime = runtime_by_dataset(runs)

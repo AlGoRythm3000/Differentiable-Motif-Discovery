@@ -13,8 +13,8 @@
 #      (dataset, seed) pairs), and does the *measured* OSq reduction a
 #      proxy buys (r_bar_after / lambda2_after getting smaller than
 #      `none`'s) actually correlate with that accuracy delta - the
-#      CLAUDE.md Sec10 non-negotiable ("optimize X, measure X, check X
-#      helped"), quantified instead of eyeballed.
+#      "optimize X, measure X, check X helped" rule, quantified instead
+#      of eyeballed.
 #
 # Every plot carries proxy descriptions, per-bar/point sample sizes, and a
 # note for any proxy with zero data - the same self-contained-figure
@@ -143,16 +143,22 @@ def plot_proxy_ablation(summary_rows: list, out_path, metric_label: str = "Test 
 
 def _matched_proxy_pairs(runs, baseline_proxy: str = "none") -> dict:
     """
-    (proxy, dataset, seed) -> (baseline_row, proxy_row) for every successful
-    run of a non-baseline proxy that has a successful `baseline_proxy`
-    sibling on the same (dataset, seed).
+    (proxy, dataset, seed, fold) -> (baseline_row, proxy_row) for every
+    successful run of a non-baseline proxy that has a successful
+    `baseline_proxy` sibling on the same (dataset, seed, fold).
+
+    The fold belongs in the key: without it, a proxy run on one fold gets paired
+    against a baseline on another, so the "paired" delta absorbs the difference
+    between two test sets - and under k-fold all but one run per cell would be
+    dropped silently. Pre-cross-validation rows carry no `fold` and degrade to
+    the old key exactly.
     """
     baseline = {}
     others = defaultdict(dict)
     for row in runs:
         if row["status"] != "ok":
             continue
-        key = (row["dataset"], row["seed"])
+        key = (row["dataset"], row["seed"], row.get("fold", ""))
         if row["proxy"] == baseline_proxy:
             baseline[key] = row
         else:
@@ -162,7 +168,7 @@ def _matched_proxy_pairs(runs, baseline_proxy: str = "none") -> dict:
     for proxy, rows_by_key in others.items():
         for key, row in rows_by_key.items():
             if key in baseline:
-                pairs[(proxy, key[0], key[1])] = (baseline[key], row)
+                pairs[(proxy,) + key] = (baseline[key], row)
     return dict(sorted(pairs.items()))
 
 
@@ -176,7 +182,7 @@ def paired_proxy_significance(runs, metric: str = "test_acc", baseline_proxy: st
     both, trust neither alone.
     """
     pairs_by_proxy = defaultdict(list)
-    for (proxy, _dataset, _seed), (baseline_row, proxy_row) in _matched_proxy_pairs(runs, baseline_proxy).items():
+    for (proxy, _dataset, _seed, _fold), (baseline_row, proxy_row) in _matched_proxy_pairs(runs, baseline_proxy).items():
         if baseline_row[metric] is None or proxy_row[metric] is None:
             continue
         pairs_by_proxy[proxy].append((baseline_row[metric], proxy_row[metric]))
@@ -237,13 +243,13 @@ def osq_reduction_vs_accuracy(runs, osq_metric: str = "r_bar_after", acc_metric:
     whether reducing measured OSq further actually buys accuracy.
     """
     pairs = []
-    for (proxy, dataset, seed), (baseline_row, proxy_row) in _matched_proxy_pairs(runs, baseline_proxy).items():
+    for (proxy, dataset, seed, fold), (baseline_row, proxy_row) in _matched_proxy_pairs(runs, baseline_proxy).items():
         if baseline_row[osq_metric] is None or proxy_row[osq_metric] is None:
             continue
         if baseline_row[acc_metric] is None or proxy_row[acc_metric] is None:
             continue
         pairs.append({
-            "proxy": proxy, "dataset": dataset, "seed": seed,
+            "proxy": proxy, "dataset": dataset, "seed": seed, "fold": fold,
             "delta_osq": proxy_row[osq_metric] - baseline_row[osq_metric],
             "delta_acc": proxy_row[acc_metric] - baseline_row[acc_metric],
         })
@@ -322,7 +328,7 @@ def main():
 
     # r_bar/effective-resistance-style proxies want this SMALLER (more negative
     # delta = more reduction, the desired direction); lambda2 is the opposite -
-    # the loss maximizes it (CLAUDE.md Sec4.4's "-lambda_2"), so a bigger
+    # the loss maximizes it (it enters the objective as "-lambda_2"), so a bigger
     # (more positive) delta is the healthy direction there.
     for osq_metric, label, higher_is_better in [
         ("r_bar_after", "Delta r_bar_after", False),

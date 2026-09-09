@@ -9,8 +9,8 @@
 #      off) and gamma>0 (on) big relative to seed noise (paired t-test /
 #      Wilcoxon across seeds), and does the *extra* OSq reduction gamma buys
 #      (r_bar_after / lambda2_after getting smaller) actually correlate with
-#      that accuracy delta - the CLAUDE.md Sec10 non-negotiable, quantified
-#      instead of eyeballed.
+#      that accuracy delta - optimize a quantity, measure it, and check it
+#      helped, quantified instead of eyeballed.
 #
 # Every plot carries its config_id -> brick-changed labels, per-bar/point
 # sample sizes and a note for any config with zero data, the same self-
@@ -141,16 +141,23 @@ def plot_brick_ablation(summary_rows: list, out_path, metric_label: str = "Test 
 
 def _matched_gamma_pairs(runs) -> dict:
     """
-    (config_id, dataset, seed) -> (gamma_off_row, gamma_on_row) for every
+    (config_id, dataset, seed, fold) -> (gamma_off_row, gamma_on_row) for every
     run that has both a successful gamma=0 sibling and a successful
     gamma>0 sibling (the largest gamma present, matching osq_effect() in
     analyze_grid.py).
+
+    `fold` is part of the key, not decoration. Under k-fold cross-validation a
+    (config, dataset, seed) cell holds k runs on k different test sets; keying
+    without the fold would keep whichever one happened to be read last and
+    silently discard the other k-1, turning a 600-pair comparison into a
+    60-pair one without saying so. Rows from the pre-cross-validation trees
+    carry no `fold`, where this degrades to the old key exactly.
     """
     off, on = {}, {}
     for row in runs:
         if row["status"] != "ok" or row["gamma"] is None:
             continue
-        key = (row["config_id"], row["dataset"], row["seed"])
+        key = (row["config_id"], row["dataset"], row["seed"], row.get("fold", ""))
         if row["gamma"] == 0.0:
             off[key] = row
         elif row["gamma"] > 0 and (key not in on or row["gamma"] > on[key]["gamma"]):
@@ -168,7 +175,7 @@ def paired_osq_significance(runs, metric: str = "test_acc") -> list:
     alone.
     """
     pairs_by_config = defaultdict(list)
-    for (cfg, _dataset, _seed), (off_row, on_row) in _matched_gamma_pairs(runs).items():
+    for (cfg, _dataset, _seed, _fold), (off_row, on_row) in _matched_gamma_pairs(runs).items():
         if off_row[metric] is None or on_row[metric] is None:
             continue
         pairs_by_config[cfg].append((off_row[metric], on_row[metric]))
@@ -229,13 +236,13 @@ def osq_reduction_vs_accuracy(runs, osq_metric: str = "r_bar_after",
     reducing OSq further actually buys accuracy.
     """
     pairs = []
-    for (cfg, dataset, seed), (off_row, on_row) in _matched_gamma_pairs(runs).items():
+    for (cfg, dataset, seed, fold), (off_row, on_row) in _matched_gamma_pairs(runs).items():
         if off_row[osq_metric] is None or on_row[osq_metric] is None:
             continue
         if off_row[acc_metric] is None or on_row[acc_metric] is None:
             continue
         pairs.append({
-            "config_id": cfg, "dataset": dataset, "seed": seed,
+            "config_id": cfg, "dataset": dataset, "seed": seed, "fold": fold,
             "delta_osq": on_row[osq_metric] - off_row[osq_metric],
             "delta_acc": on_row[acc_metric] - off_row[acc_metric],
         })

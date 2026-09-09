@@ -49,6 +49,10 @@ NUMERIC_RUN_COLUMNS = [
     "sparsity_loss", "osq_loss", "alpha_mean", "alpha_std", "num_cells",
     "mean_cell_size", "r_bar_before", "r_bar_after", "lambda2_before",
     "lambda2_after", "wc", "nwc", "params_count", "runtime_s", "peak_mem_mb",
+    # Appended by fix/experiment-protocol. `fold` stays a STRING on purpose:
+    # it is a pairing key, and an empty fold (pre-cross-validation rows) must
+    # compare equal to itself rather than becoming None.
+    "n_train", "n_val", "n_test", "alpha_frac_active",
 ]
 
 NUMERIC_EPOCH_COLUMNS = [
@@ -151,8 +155,8 @@ def osq_effect(runs, metric: str = "test_acc") -> list:
     """
     Mean `metric` with the OSq term off (gamma=0.0) vs on (the largest
     gamma>0 present in the grid), per config_id - the main question this
-    branch exists to answer (CLAUDE.md Sec10: does the lifting change the
-    metric, at all). Sample sizes are tracked on each side separately since
+    branch exists to answer: does the lifting change the metric, at all.
+    Sample sizes are tracked on each side separately since
     a failed seed can make them unequal.
     """
     by_key = defaultdict(list)
