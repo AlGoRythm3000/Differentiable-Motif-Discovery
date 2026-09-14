@@ -382,6 +382,60 @@ def _split_batch(edge_index: torch.Tensor, edge_weight: Optional[torch.Tensor],
         yield sub_edge_index, sub_weight, int(counts[g].item())
 
 
+def collapsed_adjacency_edges(cell_node_index, cell_batch, cell_alpha,
+                               edge_index, num_nodes):
+    """A^col (Taha et al. 2025, Def. 4.1) as an edge list: a CLIQUE on each
+    cell's members carrying that cell's acceptance weight, unioned with the
+    original 1-skeleton at weight 1.0 and merged with `reduce="max"`.
+
+    This is the structure the objective of the paper is *defined* on. It is
+    deliberately NOT the structure the training-time proxies score - those read
+    `rewired_edge_weight`, which `models/message_passing.build_rewired_edges`
+    builds as a STAR on one arbitrary member. Measuring R-bar on A^col here, at
+    analysis time only, is what makes "gamma lowered oversquashing" a claim
+    about the quantity the method defines rather than a restatement of the
+    optimiser having minimised its own objective.
+
+    Analysis-time only, so the clique's k(k-1)/2 edges are affordable and no
+    gradient has to flow: the electrically equivalent virtual-hub construction
+    (k edges) is what an *optimisable* version would use.
+    """
+    from torch_geometric.utils import coalesce
+
+    device = edge_index.device
+    node_index = torch.as_tensor(cell_node_index, dtype=torch.long, device=device).view(-1)
+    batch = torch.as_tensor(cell_batch, dtype=torch.long, device=device).view(-1)
+    alpha = torch.as_tensor(cell_alpha, dtype=torch.get_default_dtype(), device=device).view(-1)
+
+    src, dst, weight = [], [], []
+    if node_index.numel():
+        order = torch.argsort(batch, stable=True)
+        node_index, batch = node_index[order], batch[order]
+        boundaries = (batch[1:] != batch[:-1]).nonzero().view(-1) + 1
+        starts = [0] + boundaries.tolist()
+        ends = boundaries.tolist() + [batch.numel()]
+        for lo, hi in zip(starts, ends):
+            members = torch.unique(node_index[lo:hi])
+            cell = int(batch[lo].item())
+            if members.numel() < 2 or cell >= alpha.numel():
+                continue
+            w = float(alpha[cell].item())
+            u, v = torch.combinations(members, r=2).t()
+            src.append(torch.cat([u, v])); dst.append(torch.cat([v, u]))
+            weight.append(torch.full((2 * u.numel(),), w, device=device,
+                                     dtype=torch.get_default_dtype()))
+
+    original_w = torch.ones(edge_index.size(1), device=device,
+                            dtype=torch.get_default_dtype())
+    if src:
+        all_index = torch.cat([edge_index,
+                               torch.stack([torch.cat(src), torch.cat(dst)])], dim=1)
+        all_weight = torch.cat([original_w, torch.cat(weight)])
+    else:
+        all_index, all_weight = edge_index, original_w
+    return coalesce(all_index, all_weight, num_nodes=num_nodes, reduce="max")
+
+
 def before_after_report(samples: Iterable[dict], with_betweenness: bool = True,
                         influence_layers: int = 3) -> dict:
     """
@@ -405,6 +459,12 @@ def before_after_report(samples: Iterable[dict], with_betweenness: bool = True,
     accumulated.update({"efc_mean_after": 0.0, "efc_neg_frac_after": 0.0,
                         "influence_decay_before": 0.0, "influence_decay_after": 0.0,
                         "wc": 0.0, "nwc": 0.0})
+    # R-bar on A^col, the structure the objective is DEFINED on, as opposed to
+    # the star the proxy actually scores. Accumulated separately because a
+    # sample that carries no cell information leaves it undefined rather than
+    # silently equal to the star value.
+    acol_before = acol_after = 0.0
+    acol_count = 0
 
     count = 0
     for sample in samples:
@@ -430,8 +490,24 @@ def before_after_report(samples: Iterable[dict], with_betweenness: bool = True,
             wc = weighted_curvature(rewired, weights, num_nodes)
             accumulated["wc"] += wc["wc"]
             accumulated["nwc"] += wc["nwc"]
+
+        if sample.get("cell_node_index") is not None:
+            acol_index, acol_weight = collapsed_adjacency_edges(
+                sample["cell_node_index"], sample["cell_batch"], sample["cell_alpha"],
+                original, num_nodes)
+            acol_after += resistance_summary(acol_index, acol_weight, num_nodes)["r_bar"]
+            # The "before" side of A^col is the unlifted graph itself: with no
+            # accepted cell there is no clique to add, so it coincides with
+            # r_bar_before. Kept as its own column so a reader never has to
+            # assume that.
+            acol_before += resistance_summary(original, None, num_nodes)["r_bar"]
+            acol_count += 1
         count += 1
 
     if count == 0:
         return accumulated
-    return {k: v / count for k, v in accumulated.items()}
+    out = {k: v / count for k, v in accumulated.items()}
+    if acol_count:
+        out["r_bar_acol_before"] = acol_before / acol_count
+        out["r_bar_acol_after"] = acol_after / acol_count
+    return out

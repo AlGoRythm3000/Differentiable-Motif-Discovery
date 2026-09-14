@@ -607,8 +607,8 @@ def _collect(out: str, with_raw: bool = False) -> None:
 @app.local_entrypoint()
 def main(stage: str = "full", out: str = "results/modal", seeds: str = "0",
          folds: int = 10, only_tier: str = "", only_config: str = "",
-         proxies: str = "", gammas: str = "", dry_run: bool = False,
-         gpse: bool = True, with_raw: bool = False):
+         proxies: str = "", gammas: str = "", mus: str = "", datasets: str = "",
+         dry_run: bool = False, gpse: bool = True, with_raw: bool = False):
     """
     stage:       prepare | calibrate | full | collect
     out:         for calibrate/full, the NAME (its basename) of the directory
@@ -673,6 +673,18 @@ def main(stage: str = "full", out: str = "results/modal", seeds: str = "0",
     gamma_list = [float(g) for g in gammas.split(",") if g.strip()]
     if gamma_list:
         config.gammas = gamma_list
+    # The mu axis. Left unset, run_ids keep their historical shape and mu stays
+    # at the single value every previous grid used - which is the value that
+    # turns the lifting off in two thirds of runs, so sweeping it is the point.
+    mu_list = [float(m) for m in mus.split(",") if m.strip()]
+    if mu_list:
+        config.sparsity_weights = mu_list
+    dataset_list = [d.strip() for d in datasets.split(",") if d.strip()]
+    if dataset_list:
+        unknown = [d for d in dataset_list if d not in ALL_DATASETS]
+        if unknown:
+            raise SystemExit(f"unknown dataset(s) {unknown}; known: {list(ALL_DATASETS)}")
+        config.datasets = dataset_list
     config.commit_sha = environment_info(".").get("commit_sha", "unknown")
 
     if not only_config and stage == "calibrate":

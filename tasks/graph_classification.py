@@ -148,6 +148,12 @@ def collect_graph_samples(model, data, num_samples: int = 3) -> list:
                           node_pe=getattr(batch, "pestat_GPSE", None))
     rewired_edge_index = structure["rewired_edge_index"]
     rewired_edge_weight = structure["rewired_edge_weight"]
+    # Cell membership, so the analysis can rebuild A^col (a clique per cell) and
+    # not only the star the model actually message-passes over. Without these
+    # three arrays r_bar_after can only ever be re-measured on the structure the
+    # proxy already minimised, which is the circularity §6.7 of the paper flags.
+    candidates = structure.get("candidates")
+    alpha = structure.get("alpha")
 
     samples = []
     ptr = batch.ptr.tolist()
@@ -161,12 +167,37 @@ def collect_graph_samples(model, data, num_samples: int = 3) -> list:
         rew_edges = (rewired_edge_index[:, rew_mask] - lo).tolist()
         rew_weights = rewired_edge_weight[rew_mask].tolist()
 
-        samples.append({
+        sample = {
             "graph_id": i,
             "num_nodes": hi - lo,
             "label": int(batch.y[i].item()),
             "edge_index": orig_edges,
             "rewired_edge_index": rew_edges,
             "rewired_edge_weight": rew_weights,
-        })
+        }
+
+        if candidates is not None and alpha is not None and candidates.cell_batch.numel():
+            # Keep only cells lying wholly inside this graph. A cell that
+            # straddled two graphs of the batch would make A^col join entities
+            # that were never related; the proposals mask by batch, so this is a
+            # guard rather than an expected case.
+            slot_in = (candidates.node_index >= lo) & (candidates.node_index < hi)
+            cells_here = torch.unique(candidates.cell_batch[slot_in])
+            keep_cell = torch.zeros(int(candidates.cell_batch.max().item()) + 1,
+                                    dtype=torch.bool, device=candidates.cell_batch.device)
+            keep_cell[cells_here] = True
+            whole = keep_cell[candidates.cell_batch] & slot_in
+            for c in cells_here.tolist():
+                if not bool(slot_in[candidates.cell_batch == c].all()):
+                    whole &= candidates.cell_batch != c
+            local_cells = torch.unique(candidates.cell_batch[whole])
+            remap = torch.full((keep_cell.numel(),), -1, dtype=torch.long,
+                               device=candidates.cell_batch.device)
+            remap[local_cells] = torch.arange(local_cells.numel(),
+                                              device=candidates.cell_batch.device)
+            sample["cell_node_index"] = (candidates.node_index[whole] - lo).tolist()
+            sample["cell_batch"] = remap[candidates.cell_batch[whole]].tolist()
+            sample["cell_alpha"] = alpha[local_cells].detach().cpu().tolist()
+
+        samples.append(sample)
     return samples

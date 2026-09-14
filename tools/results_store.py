@@ -52,6 +52,15 @@ RUN_COLUMNS: List[str] = [
     #                     unclipped row can never be silently pooled.
     "fold", "n_train", "n_val", "n_test",
     "alpha_frac_active", "collapsed", "grad_clip",
+    # Appended (never inserted) by the mu-sweep / A^col work:
+    #   r_bar_acol_before/after  R-bar measured on the COLLAPSED ADJACENCY, i.e.
+    #                     a clique per accepted cell, which is the structure the
+    #                     objective is defined on. `r_bar_after` is measured on
+    #                     the star the proxy actually minimises, so the two
+    #                     together are what turns "gamma lowers oversquashing"
+    #                     from a restatement of the optimiser into a claim about
+    #                     the defined quantity. Empty on a grid run before this.
+    "r_bar_acol_before", "r_bar_acol_after",
 ]
 
 EPOCH_COLUMNS: List[str] = [
@@ -62,7 +71,8 @@ EPOCH_COLUMNS: List[str] = [
 
 
 def make_run_id(tier: str, config_id: str, dataset: str, gamma: float, seed: int,
-                fold: Optional[int] = None, proxy: Optional[str] = None) -> str:
+                fold: Optional[int] = None, proxy: Optional[str] = None,
+                sparsity_weight: Optional[float] = None) -> str:
     """
     Deterministic, so a resumed grid recognizes what it
     already ran and an analysis script can join a row back to its raw file
@@ -76,7 +86,8 @@ def make_run_id(tier: str, config_id: str, dataset: str, gamma: float, seed: int
     """
     proxy_part = f"_p{proxy}" if proxy else ""
     fold_part = f"_f{fold}" if fold is not None else ""
-    return f"{tier}_{config_id}_{dataset}{proxy_part}_g{gamma}_s{seed}{fold_part}"
+    mu_part = f"_m{sparsity_weight}" if sparsity_weight is not None else ""
+    return f"{tier}_{config_id}_{dataset}{proxy_part}_g{gamma}{mu_part}_s{seed}{fold_part}"
 
 
 class ResultsStore:

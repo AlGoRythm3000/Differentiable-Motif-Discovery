@@ -96,6 +96,15 @@ class GridConfig:
     batch_size: int = 32
     hidden_dim: int = 64
     sparsity_weight: float = 0.05
+    # The mu arm(s). `None` keeps the single historical value, so a run_id stays
+    # byte-identical and an old results tree still resumes; a list turns mu into
+    # a real swept axis.
+    #
+    # Why this exists: at the single value mu=0.05 the selector accepts no cell
+    # at all in ~2/3 of runs, which makes the cell-encoder axis unobservable
+    # rather than ineffective, and leaves "gamma prevents collapse" and "mu is
+    # simply too high" indistinguishable. mu is the one axis that separates them.
+    sparsity_weights: Optional[Sequence[float]] = None
     # Max global gradient norm. Not decoration: an unclipped REINFORCE step is
     # what drove Stage 4's scores to NaN and cost the previous grid 36 runs
     # (models/weight_assignment.py). Applied to every arm so that a clipped and
@@ -137,11 +146,13 @@ class RunSpec:
     seed: int
     fold: Optional[int] = None
     proxy: Optional[str] = None
+    sparsity_weight: Optional[float] = None
 
     @property
     def run_id(self) -> str:
         return make_run_id(self.tier, self.config_id, self.dataset, self.gamma, self.seed,
-                           fold=self.fold, proxy=self.proxy)
+                           fold=self.fold, proxy=self.proxy,
+                           sparsity_weight=self.sparsity_weight)
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +194,10 @@ def build_plan(config: GridConfig) -> List[RunSpec]:
     # back to `config.best_proxy`), so a results tree from before the sweep
     # still resumes and every stored figure still resolves its rows.
     proxies = tuple(config.proxies) if config.proxies is not None else (None,)
+    # Same convention as `proxies`: `None` leaves RunSpec.sparsity_weight unset
+    # so the run_id keeps its historical shape and run_single falls back to
+    # `config.sparsity_weight`.
+    mus = tuple(config.sparsity_weights) if config.sparsity_weights is not None else (None,)
     folds = range(config.cv_folds) if config.cv_folds else (None,)
 
     plan: List[RunSpec] = []
@@ -195,10 +210,12 @@ def build_plan(config: GridConfig) -> List[RunSpec]:
                     # proxy at gamma=0 would be the same run stored under
                     # several names.
                     for proxy in ((None,) if gamma == 0.0 else proxies):
-                        for seed in config.seeds:
-                            for fold in folds:
-                                plan.append(RunSpec(tier, pconfig["config_id"], dataset,
-                                                    gamma, seed, fold=fold, proxy=proxy))
+                        for mu in mus:
+                            for seed in config.seeds:
+                                for fold in folds:
+                                    plan.append(RunSpec(tier, pconfig["config_id"], dataset,
+                                                        gamma, seed, fold=fold, proxy=proxy,
+                                                        sparsity_weight=mu))
     return plan
 
 
@@ -419,7 +436,8 @@ def run_single(spec: RunSpec, config: GridConfig, pipeline_config: dict, dataset
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
                                  weight_decay=config.weight_decay)
     reinforce_module = model.selector if pipeline_config["s4"] == "reinforce" else None
-    criterion = DMDLoss(sparsity_weight=config.sparsity_weight, osq_weight=spec.gamma,
+    mu = config.sparsity_weight if spec.sparsity_weight is None else spec.sparsity_weight
+    criterion = DMDLoss(sparsity_weight=mu, osq_weight=spec.gamma,
                         osq_fn=get_proxy(proxy, hutch_k=config.hutch_k,
                                          cg_tol=config.cg_tol, cg_maxiter=config.cg_maxiter,
                                          eps=config.osq_eps),
@@ -492,7 +510,7 @@ def run_single(spec: RunSpec, config: GridConfig, pipeline_config: dict, dataset
         "s1_encoder_actual": getattr(model.embedder, "actual_encoder", pipeline_config["s1"]),
         "s2_proposal": pipeline_config["s2"], "s3_cell_encoder": pipeline_config["s3"],
         "s4_selector": pipeline_config["s4"], "s5_mp": pipeline_config["s5"],
-        "osq_proxy": proxy, "gamma": spec.gamma, "sparsity_weight": config.sparsity_weight,
+        "osq_proxy": proxy, "gamma": spec.gamma, "sparsity_weight": mu,
         "epochs_ran": epochs_ran, "best_epoch": best_epoch,
         "train_acc": best_record.get("train_acc", ""), "val_acc": best_val,
         "test_acc": best_test, "train_loss": best_record.get("train_loss", ""),
@@ -503,6 +521,10 @@ def run_single(spec: RunSpec, config: GridConfig, pipeline_config: dict, dataset
         "lambda2_before": osq.get("lambda2_before", ""),
         "lambda2_after": osq.get("lambda2_after", ""),
         "wc": osq.get("wc", ""), "nwc": osq.get("nwc", ""),
+        # Empty when the samples carried no cell information (a grid run before
+        # A^col was measured), never silently equal to the star value.
+        "r_bar_acol_before": osq.get("r_bar_acol_before", ""),
+        "r_bar_acol_after": osq.get("r_bar_acol_after", ""),
         "params_count": sum(p.numel() for p in model.parameters()),
         "peak_mem_mb": _peak_memory_mb(config.device),
         "status": "ok", "error": "",
@@ -595,7 +617,9 @@ def run_grid(config: GridConfig, store: ResultsStore, plan: Optional[List[RunSpe
                    "gamma": spec.gamma, "seed": spec.seed,
                    "fold": "" if spec.fold is None else spec.fold,
                    "osq_proxy": (spec.proxy or config.best_proxy) if spec.gamma > 0 else "none",
-                   "sparsity_weight": config.sparsity_weight,
+                   "sparsity_weight": (config.sparsity_weight
+                                       if spec.sparsity_weight is None
+                                       else spec.sparsity_weight),
                    "status": "failed", "error": error.strip().splitlines()[-1][:300]}
             history, extras = [], {"error": error}
             failed += 1
