@@ -60,22 +60,38 @@ def _mean_sd(xs):
     return m, sd, len(xs)
 
 
+def _variant_order(key):
+    """Total order on the values of a split column, numbers before strings.
+
+    `min(..., key=float-or-0.0)` sent every non-numeric variant to the same
+    sort key, so with config_ids ("A0"/"A3"/"A8") the base was whichever row
+    the CSV happened to list first - the direction of every delta then
+    depended on file order.
+    """
+    value = _f(key)
+    return (0, value, "") if value is not None else (1, 0.0, str(key))
+
+
 def _paired(rows, split_col, metric, hold):
-    """Deltas between rows differing ONLY in `split_col`, keyed on `hold`."""
+    """Deltas for EVERY ordered pair of `split_col` values, keyed on `hold`.
+
+    All pairs, not base-against-the-rest: with three arms the comparison that
+    isolates one brick is often the one that does not involve the base at all
+    (A8 vs A3 isolates the message passing from the cycle_basis proposal), and
+    a single-base scheme never emits it.
+    """
     keyed = defaultdict(dict)
     for r in rows:
         keyed[tuple(r.get(c, "") for c in hold)][r.get(split_col, "")] = r
     out = defaultdict(list)
     for variants in keyed.values():
-        if len(variants) < 2:
-            continue
-        base = min(variants, key=lambda k: float(k) if _f(k) is not None else 0.0)
-        for other, row in variants.items():
-            if other == base:
-                continue
-            a, b = _f(variants[base].get(metric)), _f(row.get(metric))
-            if a is not None and b is not None:
-                out[(base, other)].append((a, b))
+        keys = sorted(variants, key=_variant_order)
+        for i, base in enumerate(keys):
+            for other in keys[i + 1:]:
+                a = _f(variants[base].get(metric))
+                b = _f(variants[other].get(metric))
+                if a is not None and b is not None:
+                    out[(base, other)].append((a, b))
     return out
 
 
@@ -157,6 +173,32 @@ def q_tnn(rows):
         coll = sum(1 for r in rs if str(r.get("collapsed")) == "True")
         print(f"  {cid:<6}{rs[0].get('s2_proposal',''):>14}{rs[0].get('s5_mp',''):>16}"
               f"{n:>5}{m:>12.4f} +/-{sd:.3f}{100*coll/len(rs):>10.1f}%")
+
+    # Whether the complex is ALIVE decides what a delta on a TNN arm means. If
+    # the selector accepts no 2-cell, every rank-2 feature the CWN layer reads
+    # is gated to zero and the arm is a rank<=1 architecture wearing a TNN's
+    # name - so an A8-A3 delta then compares CWN's edge pathway against a
+    # second GCNConv, and says nothing about higher-order message passing.
+    print("\n  Vivacite du complexe (une cellule 'acceptee' = alpha_frac_active > 0) :")
+    print(f"  {'config':<6}{'n':>5}{'num_cells':>12}{'alpha_mean':>12}{'runs vivants':>14}"
+          f"{'datasets':>10}")
+    for cid, rs in sorted(by_cfg.items()):
+        nc, _, _ = _mean_sd([_f(r.get("num_cells")) for r in rs])
+        am, _, _ = _mean_sd([_f(r.get("alpha_mean")) for r in rs])
+        live = sum(1 for r in rs if (_f(r.get("alpha_frac_active")) or 0.0) > 0.0)
+        nds = len({r["dataset"] for r in rs})
+        print(f"  {cid:<6}{len(rs):>5}{nc:>12.1f}{am:>12.4f}{live:>9}/{len(rs):<4}{nds:>10}")
+
+    # Coverage first, because an unbalanced marginal is a Simpson trap: an arm
+    # that only ran on the hard datasets looks worse than the arms that ran on
+    # all of them, for a reason that has nothing to do with the arm. Only the
+    # paired numbers below survive that.
+    ds_all = {r["dataset"] for r in rows}
+    ragged = [cid for cid, rs in by_cfg.items() if {r["dataset"] for r in rs} != ds_all]
+    if ragged:
+        print(f"\n  ATTENTION couverture inegale ({', '.join(sorted(ragged))} n'ont pas les "
+              f"{len(ds_all)} datasets) :")
+        print("  les moyennes marginales ci-dessus NE SONT PAS comparables entre bras.")
 
     print("\n  Paires within (dataset, fold, gamma) - A3 est le controle qui isole")
     print("  le message passing de la proposition cycle_basis :")
