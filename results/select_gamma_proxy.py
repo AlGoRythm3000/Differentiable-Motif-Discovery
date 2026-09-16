@@ -173,12 +173,24 @@ def summarize(runs, metric="val_acc"):
                "n_improved": sum(1 for d in deltas if d > 0),
                "n_worse": sum(1 for d in deltas if d < 0),
                "mean_delta_test": (sum(test_deltas) / len(test_deltas)) if test_deltas else None,
+               "n_pairs_test": len(test_deltas),
                "mean_delta_r_bar": (sum(r_deltas) / len(r_deltas)) if r_deltas else None,
                "r_bar_improved": sum(1 for d in r_deltas if d < 0),
                "collapse_rate": collapsed / n if n else None}
         row.update(_paired_tests(baselines, values))
+        # The test-side delta is CONFIRMATORY: never selected on, reported so a
+        # reader can see whether the arm the validation set chose also moved the
+        # held-out metric, and how far that is from chance. Corrected across the
+        # same family of arms below, so quoting it carries the same discipline
+        # as the selection p-value it sits beside.
+        if test_deltas:
+            conf = _paired_tests([0.0] * len(test_deltas), test_deltas)
+            row["t_pvalue_test"] = conf.get("t_pvalue")
         rows.append(row)
 
+    corrected_t = holm([r.get("t_pvalue_test") for r in rows])
+    for row, p in zip(rows, corrected_t):
+        row["t_pvalue_test_holm"] = p
     corrected = holm([r.get("t_pvalue") for r in rows])
     for row, p in zip(rows, corrected):
         row["t_pvalue_holm"] = p
